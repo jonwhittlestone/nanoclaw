@@ -89,7 +89,9 @@ app.post('/messages', express.json(), async (req, res) => {
   res.status(404).send('No active session')
 })
 
-// Only start listening when run directly — not when imported by tests
-if (require.main === module) {
+// Only start listening when run directly — not when imported by tests.
+// ESM equivalent of CommonJS `require.main === module`.
+import { fileURLToPath } from 'node:url'
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   app.listen(PORT, '0.0.0.0', () => console.log(`gcal-mcp-server listening on port ${PORT}`))
 }
