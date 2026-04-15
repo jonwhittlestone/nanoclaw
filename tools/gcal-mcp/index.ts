@@ -1,7 +1,4 @@
 import express from 'express'
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { handleTool } from './calendar'
 
 const PORT = parseInt(process.env.GCAL_MCP_PORT ?? '3020', 10)
@@ -47,35 +44,70 @@ const TOOLS = [
 export const app = express()
 app.use(express.json())
 
-// POST /mcp — single endpoint for all MCP communication (StreamableHTTP transport).
-// Replaces the old /sse + /messages pattern. Each request gets its own stateless
-// transport instance; the MCP SDK handles session negotiation internally.
+// POST /mcp — MCP Streamable HTTP transport, implemented directly as JSON-RPC.
+//
+// We bypass StreamableHTTPServerTransport because it requires
+// Accept: application/json, text/event-stream, which the Claude Agent SDK
+// (type: 'http') does not send. Direct JSON-RPC handling avoids that check
+// while remaining fully compatible with the MCP protocol.
 app.post('/mcp', async (req, res) => {
-  const server = new Server(
-    { name: 'google-calendar', version: '1.0.0' },
-    { capabilities: { tools: {} } },
-  )
+  const { method, params, id } = req.body ?? {}
 
-  // Agent asks: "what tools do you have?"
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
+  // MCP initialize — client announces itself, server returns capabilities
+  if (method === 'initialize') {
+    return res.json({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'google-calendar', version: '1.0.0' },
+      },
+    })
+  }
 
-  // Agent calls a tool
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params
+  // MCP notifications (e.g. notifications/initialized) — no response needed
+  if (method?.startsWith('notifications/')) {
+    return res.status(204).end()
+  }
+
+  // tools/list — agent asks what tools are available
+  if (method === 'tools/list') {
+    return res.json({
+      jsonrpc: '2.0',
+      id,
+      result: { tools: TOOLS },
+    })
+  }
+
+  // tools/call — agent invokes a tool
+  if (method === 'tools/call') {
+    const { name, arguments: args } = params ?? {}
     try {
       const result = await handleTool(name, (args ?? {}) as Record<string, unknown>)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+      })
     } catch (err) {
-      // isError: true signals to the agent that the tool failed — it can decide how to recover
-      return { content: [{ type: 'text', text: `Error: ${(err as Error).message}` }], isError: true }
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        },
+      })
     }
-  })
+  }
 
-  // Stateless mode: no sessionIdGenerator — each POST is self-contained.
-  // Suitable for a single-user local server; no sticky sessions needed.
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
-  await server.connect(transport)
-  await transport.handleRequest(req, res, req.body)
+  // Unknown method
+  res.status(400).json({
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32601, message: `Method not found: ${method}` },
+  })
 })
 
 // Only start listening when run directly — not when imported by tests.

@@ -16,15 +16,16 @@ import { app } from './index'
 // The StreamableHTTP transport handles session negotiation internally.
 // ==================================================================
 describe('POST /mcp', () => {
-  it('returns 400 for a malformed (non-JSON-RPC) request body', async () => {
-    // given — a body that isn't a valid JSON-RPC message
+  it('returns 400 with method not found for an unknown JSON-RPC method', async () => {
+    // given — a valid JSON-RPC envelope but an unknown method
 
     // when
     const res = await request(app)
       .post('/mcp')
-      .send({ not: 'a jsonrpc message' })
+      .send({ jsonrpc: '2.0', id: 1, method: 'unknown/method', params: {} })
 
-    // then — transport rejects it with 406 Not Acceptable before reaching our tool handler
-    expect(res.status).toBe(406)
+    // then — our handler returns 400 method not found
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('Method not found')
   })
 })
