@@ -30,4 +30,36 @@ export async function handleTool(name: string, args: Args): Promise<unknown> {
       accessRole: c.accessRole,
     }))
   }
+
+  if (name === 'list_events') {
+    const calendarId = (args.calendarId as string) ?? 'primary'
+    const now = new Date()
+    // Default window: now → +7 days. Can be overridden by the agent.
+    const timeMin = (args.timeMin as string) ?? now.toISOString()
+    const timeMax = (args.timeMax as string) ?? new Date(now.getTime() + 7 * 86400000).toISOString()
+
+    const res = await cal.events.list({
+      calendarId,
+      timeMin,
+      timeMax,
+      // Clamp to 100 — the Google Calendar API hard limit
+      maxResults: Math.min((args.maxResults as number) ?? 20, 100),
+      singleEvents: true,    // expand recurring events into individual instances
+      orderBy: 'startTime',  // chronological order
+      q: (args.query as string) ?? undefined,
+    })
+
+    return (res.data.items ?? []).map(e => ({
+      id: e.id,
+      summary: e.summary,
+      // dateTime is used for timed events; date for all-day events
+      start: e.start?.dateTime ?? e.start?.date,
+      end:   e.end?.dateTime   ?? e.end?.date,
+      location: e.location,
+      // Trim description to avoid flooding the agent context window
+      description: e.description?.slice(0, 200),
+      status: e.status,
+      htmlLink: e.htmlLink,
+    }))
+  }
 }
