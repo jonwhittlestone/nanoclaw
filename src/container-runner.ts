@@ -269,7 +269,12 @@ async function buildContainerArgs(
 
   // Bypass the OneCLI proxy for requests to the host machine (e.g. gcal-mcp on port 3020).
   // Without this, HTTP_PROXY routes MCP calls through the OneCLI gateway which blocks them.
-  args.push('-e', 'NO_PROXY=host.docker.internal', '-e', 'no_proxy=host.docker.internal');
+  args.push(
+    '-e',
+    'NO_PROXY=host.docker.internal',
+    '-e',
+    'no_proxy=host.docker.internal',
+  );
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
