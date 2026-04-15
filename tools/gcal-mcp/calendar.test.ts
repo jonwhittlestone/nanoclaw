@@ -110,3 +110,82 @@ describe("handleTool('list_calendars')", () => {
     expect(await handleTool('list_calendars', {})).toEqual([])
   })
 })
+
+// ==================================================================
+// handleTool('list_events')
+// Fetches events from a calendar within a time window.
+// Defaults: calendarId='primary', window=now→+7days, maxResults=20.
+// ==================================================================
+describe("handleTool('list_events')", () => {
+  it('forwards calendarId and date range to the API', async () => {
+    // given
+    mockEventsList.mockResolvedValue({ data: { items: [] } })
+    const args = {
+      calendarId: 'family@group.calendar.google.com',
+      timeMin: '2026-04-15T00:00:00Z',
+      timeMax: '2026-04-22T00:00:00Z',
+    }
+
+    // when
+    await handleTool('list_events', args)
+
+    // then — exact args forwarded to the API
+    expect(mockEventsList).toHaveBeenCalledWith(expect.objectContaining({
+      calendarId: 'family@group.calendar.google.com',
+      timeMin: '2026-04-15T00:00:00Z',
+      timeMax: '2026-04-22T00:00:00Z',
+    }))
+  })
+
+  it('defaults calendarId to "primary" when not provided', async () => {
+    // given
+    mockEventsList.mockResolvedValue({ data: { items: [] } })
+
+    // when
+    await handleTool('list_events', {})
+
+    // then
+    expect(mockEventsList).toHaveBeenCalledWith(expect.objectContaining({ calendarId: 'primary' }))
+  })
+
+  it('caps maxResults at 100 regardless of what the caller requests', async () => {
+    // given
+    mockEventsList.mockResolvedValue({ data: { items: [] } })
+
+    // when
+    await handleTool('list_events', { maxResults: 999 })
+
+    // then — Google Calendar API hard limit is 100; exceeding it returns an error
+    expect(mockEventsList).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 100 }))
+  })
+
+  it('returns a formatted event object for each item', async () => {
+    // given
+    mockEventsList.mockResolvedValue({
+      data: {
+        items: [{
+          id: 'evt1',
+          summary: 'Team standup',
+          start: { dateTime: '2026-04-15T09:00:00Z' },
+          end:   { dateTime: '2026-04-15T09:15:00Z' },
+          location: 'Google Meet',
+          description: 'Daily sync',
+          status: 'confirmed',
+          htmlLink: 'https://calendar.google.com/event?eid=abc',
+        }],
+      },
+    })
+
+    // when
+    const result = await handleTool('list_events', {}) as any[]
+
+    // then — formatted projection (not raw API response)
+    expect(result[0]).toMatchObject({
+      id: 'evt1',
+      summary: 'Team standup',
+      start: '2026-04-15T09:00:00Z',
+      end:   '2026-04-15T09:15:00Z',
+      location: 'Google Meet',
+    })
+  })
+})
