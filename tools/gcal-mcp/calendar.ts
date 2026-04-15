@@ -62,4 +62,13 @@ export async function handleTool(name: string, args: Args): Promise<unknown> {
       htmlLink: e.htmlLink,
     }))
   }
+
+  if (name === 'get_event') {
+    // Return the full event object — caller asked for details, give it everything
+    const res = await cal.events.get({
+      calendarId: args.calendarId as string,
+      eventId:    args.eventId    as string,
+    })
+    return res.data
+  }
 }
