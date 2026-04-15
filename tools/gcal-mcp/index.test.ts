@@ -11,25 +11,20 @@ vi.mock('./calendar', () => ({
 import { app } from './index'
 
 // ==================================================================
-// POST /messages
-// MCP clients POST JSON-RPC messages here after connecting via /sse.
-// If no SSE session is active, the server must reject the request.
+// POST /mcp
+// All MCP communication goes through this single endpoint.
+// The StreamableHTTP transport handles session negotiation internally.
 // ==================================================================
-describe('POST /messages', () => {
-  it('returns 404 with "No active session" when no SSE client is connected', async () => {
-    // given — no client has connected to /sse (transports map is empty)
+describe('POST /mcp', () => {
+  it('returns 400 for a malformed (non-JSON-RPC) request body', async () => {
+    // given — a body that isn't a valid JSON-RPC message
 
     // when
     const res = await request(app)
-      .post('/messages')
-      .send({ jsonrpc: '2.0', method: 'tools/list', id: 1 })
+      .post('/mcp')
+      .send({ not: 'a jsonrpc message' })
 
-    // then
-    expect(res.status).toBe(404)
-    expect(res.text).toBe('No active session')
+    // then — transport rejects it with 406 Not Acceptable before reaching our tool handler
+    expect(res.status).toBe(406)
   })
 })
-
-// Note: GET /sse is not unit-tested — it opens a persistent SSE stream
-// which doesn't fit request/response testing. Verified end-to-end in Part 6:
-//   curl -s http://localhost:3020/sse

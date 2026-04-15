@@ -1,6 +1,6 @@
 import express from 'express'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { handleTool } from './calendar'
 
@@ -45,13 +45,12 @@ const TOOLS = [
 
 // Exported so index.test.ts can import it without starting the server
 export const app = express()
+app.use(express.json())
 
-// Map of active SSE sessions. Each GET /sse request creates one entry.
-// POST /messages routes to whichever session is active.
-const transports = new Map<string, SSEServerTransport>()
-
-// GET /sse — MCP client connects here first. Opens a persistent SSE stream.
-app.get('/sse', async (req, res) => {
+// POST /mcp — single endpoint for all MCP communication (StreamableHTTP transport).
+// Replaces the old /sse + /messages pattern. Each request gets its own stateless
+// transport instance; the MCP SDK handles session negotiation internally.
+app.post('/mcp', async (req, res) => {
   const server = new Server(
     { name: 'google-calendar', version: '1.0.0' },
     { capabilities: { tools: {} } },
@@ -72,21 +71,11 @@ app.get('/sse', async (req, res) => {
     }
   })
 
-  const transport = new SSEServerTransport('/messages', res)
+  // Stateless mode: no sessionIdGenerator — each POST is self-contained.
+  // Suitable for a single-user local server; no sticky sessions needed.
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   await server.connect(transport)
-
-  const id = Math.random().toString(36).slice(2)
-  transports.set(id, transport)
-  res.on('close', () => transports.delete(id)) // clean up on disconnect
-})
-
-// POST /messages — MCP client sends JSON-RPC calls here after connecting via /sse
-app.post('/messages', express.json(), async (req, res) => {
-  for (const transport of transports.values()) {
-    await transport.handlePostMessage(req, res)
-    return
-  }
-  res.status(404).send('No active session')
+  await transport.handleRequest(req, res, req.body)
 })
 
 // Only start listening when run directly — not when imported by tests.
