@@ -28,9 +28,9 @@ const { mockSetCredentials, mockOAuth2, mockCalendarListList, mockEventsList, mo
 vi.mock('googleapis', () => ({
   google: {
     auth: {
-      OAuth2: mockOAuth2.mockImplementation(() => ({
-        setCredentials: mockSetCredentials,
-      })),
+      OAuth2: mockOAuth2.mockImplementation(function () {
+        return { setCredentials: mockSetCredentials }
+      }),
     },
     calendar: vi.fn(() => ({
       calendarList: { list: mockCalendarListList },
