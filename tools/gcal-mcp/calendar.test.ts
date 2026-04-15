@@ -189,3 +189,32 @@ describe("handleTool('list_events')", () => {
     })
   })
 })
+// ==================================================================
+// handleTool('get_event')
+// Fetches full details of a single event by calendarId + eventId.
+// Used as a follow-up when list_events returns something interesting.
+// ==================================================================
+describe("handleTool('get_event')", () => {
+  it('passes calendarId and eventId verbatim to the API', async () => {
+    // given
+    mockEventsGet.mockResolvedValue({ data: { id: 'evt1', summary: 'Dentist' } })
+
+    // when
+    await handleTool('get_event', { calendarId: 'primary', eventId: 'evt1' })
+
+    // then — both IDs forwarded exactly as provided (no defaulting)
+    expect(mockEventsGet).toHaveBeenCalledWith({ calendarId: 'primary', eventId: 'evt1' })
+  })
+
+  it('returns the full raw API response (unlike list_events which projects fields)', async () => {
+    // given
+    const fullEvent = { id: 'evt1', summary: 'Dentist', description: 'Crown fitting', attendees: [] }
+    mockEventsGet.mockResolvedValue({ data: fullEvent })
+
+    // when
+    const result = await handleTool('get_event', { calendarId: 'primary', eventId: 'evt1' })
+
+    // then — get_event returns everything; the agent asked for details
+    expect(result).toEqual(fullEvent)
+  })
+})
