@@ -71,4 +71,8 @@ export async function handleTool(name: string, args: Args): Promise<unknown> {
     })
     return res.data
   }
+
+  // Reaching here means the MCP server was called with a tool we don't implement.
+  // Throwing causes the MCP layer to return isError: true to the agent.
+  throw new Error(`Unknown tool: ${name}`)
 }
