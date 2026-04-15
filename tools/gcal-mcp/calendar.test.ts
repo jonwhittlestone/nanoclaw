@@ -218,3 +218,19 @@ describe("handleTool('get_event')", () => {
     expect(result).toEqual(fullEvent)
   })
 })
+
+// ==================================================================
+// handleTool — unknown tool name
+// The MCP protocol forwards whatever tool name the agent requests.
+// If it doesn't match a known tool, we throw rather than silently
+// returning undefined — the MCP layer catches and returns isError: true.
+// ==================================================================
+describe('handleTool — unknown tool', () => {
+  it('throws with the unknown tool name in the message', async () => {
+    // given — a tool name that doesn't exist
+
+    // when / then
+    await expect(handleTool('delete_everything', {}))
+      .rejects.toThrow('Unknown tool: delete_everything')
+  })
+})
