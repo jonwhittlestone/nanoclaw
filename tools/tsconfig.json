@@ -2,6 +2,8 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "rootDir": ".",
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "types": ["node", "vitest/globals"]
   },
   "include": ["./**/*"]

@@ -39,7 +39,7 @@ vi.mock('googleapis', () => ({
   },
 }))
 
-import { makeCalendarClient } from './calendar'
+import { makeCalendarClient, handleTool } from './calendar'
 
 // Reset all mock call counts before each test
 beforeEach(() => {
@@ -72,5 +72,41 @@ describe('makeCalendarClient', () => {
 
     // then — setCredentials called with the refresh token
     expect(mockSetCredentials).toHaveBeenCalledWith({ refresh_token: 'test-refresh-token' })
+  })
+})
+
+// ==================================================================
+// handleTool('list_calendars')
+// Returns every calendar visible to this Google account — includes
+// calendars shared with you (e.g. whittlestonefamily@gmail.com).
+// ==================================================================
+describe("handleTool('list_calendars')", () => {
+  it('returns id, summary, primary flag, and accessRole for each calendar', async () => {
+    // given — the API returns two calendars
+    mockCalendarListList.mockResolvedValue({
+      data: {
+        items: [
+          { id: 'primary', summary: 'Jon Whittlestone', primary: true, accessRole: 'owner' },
+          { id: 'family@group.calendar.google.com', summary: 'Whittlestone Family', primary: false, accessRole: 'reader' },
+        ],
+      },
+    })
+
+    // when
+    const result = await handleTool('list_calendars', {})
+
+    // then — slim projection returned (not the full API response object)
+    expect(result).toEqual([
+      { id: 'primary', summary: 'Jon Whittlestone', primary: true, accessRole: 'owner' },
+      { id: 'family@group.calendar.google.com', summary: 'Whittlestone Family', primary: false, accessRole: 'reader' },
+    ])
+  })
+
+  it('returns an empty array when the API returns no items', async () => {
+    // given — edge case: account with no calendars (or API returns undefined)
+    mockCalendarListList.mockResolvedValue({ data: { items: undefined } })
+
+    // when / then
+    expect(await handleTool('list_calendars', {})).toEqual([])
   })
 })
