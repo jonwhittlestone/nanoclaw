@@ -486,6 +486,7 @@ async function runQuery(
           },
         },
         'google-calendar': {
+          type: 'http',
           url: 'http://host.docker.internal:3020/mcp',
         },
       },
