@@ -145,6 +145,10 @@ def download_web_images(text: str, tmp_dir: Path) -> str:
     Many CDNs (e.g. substackcdn) serve images as webp. xelatex does not support
     webp natively, so webp images are converted to PNG via ImageMagick (convert).
 
+    Uses a proxy-free opener so that OneCLI's HTTP_PROXY (injected for Anthropic
+    API credential injection) does not intercept CDN image requests, which need
+    no credential injection and may be blocked by the proxy.
+
     If a download or conversion fails the image reference is left unchanged
     (graceful degradation — pandoc will silently skip images it can't read).
     """
@@ -157,8 +161,20 @@ def download_web_images(text: str, tmp_dir: Path) -> str:
         n = img_index[0]
 
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': (
+                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+                    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+                ),
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'en-GB,en;q=0.9',
+                'Referer': 'https://substack.com/',
+            })
+            # Bypass HTTP_PROXY — OneCLI sets it for Anthropic API credential
+            # injection, but CDN image requests need no credentials and the
+            # proxy may block or reject external traffic.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=15) as resp:
                 ct = resp.headers.get('Content-Type', '')
                 ext = _ext_from_content_type(ct) or _ext_from_url(url) or '.bin'
                 local_path = tmp_dir / f'web-image-{n}{ext}'

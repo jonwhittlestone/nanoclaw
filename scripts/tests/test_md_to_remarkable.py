@@ -11,6 +11,7 @@ import pytest
 # The script lives one directory above tests/ — add it to sys.path so pytest
 # can import it as a module without an __init__.py at the scripts/ root.
 import sys
+import urllib.request
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from md_to_remarkable import (
@@ -84,6 +85,12 @@ class TestExtFromUrl:
 # ── download_web_images ───────────────────────────────────────────────────────
 
 class TestDownloadWebImages:
+    def _mock_opener(self, fake_resp):
+        """Return a mock opener whose .open() yields fake_resp as a context manager."""
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = fake_resp
+        return mock_opener
+
     def test_downloads_image_and_replaces_url(self, tmp_path):
         # given — markdown with one web image
         text = "Before\n![alt text](https://example.com/photo.png)\nAfter"
@@ -95,7 +102,7 @@ class TestDownloadWebImages:
         mock_resp.headers.get.return_value = "image/png"
         mock_resp.read.return_value = fake_bytes
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("urllib.request.build_opener", return_value=self._mock_opener(mock_resp)):
             # when
             result = download_web_images(text, tmp_path)
 
@@ -103,6 +110,24 @@ class TestDownloadWebImages:
         assert "https://example.com" not in result
         assert "web-image-1.png" in result
         assert (tmp_path / "web-image-1.png").read_bytes() == fake_bytes
+
+    def test_bypasses_proxy_for_cdn_downloads(self, tmp_path):
+        # given — OneCLI sets HTTP_PROXY in containers; images must bypass it
+        text = "![](https://substackcdn.com/image/fetch/photo.png)"
+
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.headers.get.return_value = "image/png"
+        mock_resp.read.return_value = b"\x89PNG"
+
+        with patch("urllib.request.build_opener") as mock_build:
+            mock_build.return_value = self._mock_opener(mock_resp)
+            # when
+            download_web_images(text, tmp_path)
+            # then — opener was built with an empty ProxyHandler (no proxy)
+            args, _ = mock_build.call_args
+            assert any(isinstance(a, urllib.request.ProxyHandler) for a in args)
 
     def test_converts_webp_to_png(self, tmp_path):
         # given — CDN serves webp; xelatex cannot embed webp directly
@@ -120,7 +145,7 @@ class TestDownloadWebImages:
             Path(cmd[2]).write_bytes(b"\x89PNG")
             return MagicMock(returncode=0)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp), \
+        with patch("urllib.request.build_opener", return_value=self._mock_opener(mock_resp)), \
              patch("shutil.which", return_value="/usr/bin/convert"), \
              patch("subprocess.run", side_effect=fake_convert):
             # when
@@ -131,10 +156,13 @@ class TestDownloadWebImages:
         assert ".png" in result
 
     def test_leaves_url_unchanged_on_download_failure(self, tmp_path):
-        # given — unreachable host
+        # given — proxy blocks or host unreachable
         text = "![](https://unreachable.example.com/img.png)"
 
-        with patch("urllib.request.urlopen", side_effect=OSError("Connection refused")):
+        mock_opener = MagicMock()
+        mock_opener.open.side_effect = OSError("Connection refused")
+
+        with patch("urllib.request.build_opener", return_value=mock_opener):
             # when
             result = download_web_images(text, tmp_path)
 
