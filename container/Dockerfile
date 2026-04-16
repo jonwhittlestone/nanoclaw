@@ -41,10 +41,6 @@ RUN apt-get update && apt-get install -y \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 RUN npm install -g @mermaid-js/mermaid-cli
 
-# Puppeteer config: use the system Chromium already installed above
-RUN echo '{"executablePath":"/usr/bin/chromium","args":["--no-sandbox","--disable-setuid-sandbox"]}' \
-    > /app/puppeteer.config.json
-
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
@@ -54,6 +50,11 @@ RUN npm install -g agent-browser @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
+
+# Puppeteer config for mermaid CLI — use the system Chromium already in the image.
+# Must be written after WORKDIR /app so /app exists.
+RUN echo '{"executablePath":"/usr/bin/chromium","args":["--no-sandbox","--disable-setuid-sandbox"]}' \
+    > /app/puppeteer.config.json
 
 # Copy package files first for better caching
 COPY agent-runner/package*.json ./
