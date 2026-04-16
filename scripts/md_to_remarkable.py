@@ -286,6 +286,29 @@ def find_note(query: str) -> Path:
 
 # ── Conversion ─────────────────────────────────────────────────────────────────
 
+def _pandoc_cmd(md_file: Path, pdf_path: Path, resource_path: Path) -> list[str]:
+    """Return the pandoc command list for xelatex PDF conversion.
+
+    Uses scrartcl (KOMA-Script) which supports arbitrary font sizes, unlike the
+    standard article class that is limited to 10/11/12pt. Font size is 15pt
+    (~40% larger than the 11pt default) and line spacing is 1.625 (~25% larger
+    than the 1.3 default) — both tuned for comfortable reMarkable reading.
+    """
+    return [
+        'pandoc', str(md_file),
+        '--output', str(pdf_path),
+        '--pdf-engine=xelatex',
+        '--variable', 'documentclass=scrartcl',
+        '--variable', 'papersize=a5',
+        '--variable', 'geometry:margin=2.5cm',
+        '--variable', 'fontsize=15pt',
+        '--variable', 'linestretch=1.625',
+        '--highlight-style=tango',
+        '--standalone',
+        '--resource-path', str(resource_path),
+    ]
+
+
 def convert_to_pdf(note_path: Path, pdf_path: Path) -> None:
     """Preprocess Obsidian markdown and convert to PDF via pandoc + xelatex."""
 
@@ -298,18 +321,7 @@ def convert_to_pdf(note_path: Path, pdf_path: Path) -> None:
         md_file.write_text(processed, encoding='utf-8')
 
         result = subprocess.run(
-            [
-                'pandoc', str(md_file),
-                '--output', str(pdf_path),
-                '--pdf-engine=xelatex',
-                '--variable', 'papersize=a5',
-                '--variable', 'geometry:margin=2.5cm',
-                '--variable', 'fontsize=11pt',
-                '--variable', 'linestretch=1.3',
-                '--highlight-style=tango',
-                '--standalone',
-                '--resource-path', str(note_path.parent),
-            ],
+            _pandoc_cmd(md_file, pdf_path, note_path.parent),
             capture_output=True,
             text=True,
         )

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from md_to_remarkable import (
     _ext_from_content_type,
     _ext_from_url,
+    _pandoc_cmd,
     download_web_images,
     render_mermaid_blocks,
     resolve_embedded_images,
@@ -237,3 +238,31 @@ class TestResolveEmbeddedImages:
         result = resolve_embedded_images(text, note_path)
         # then — removed entirely
         assert result == ""
+
+
+# ── _pandoc_cmd ───────────────────────────────────────────────────────────────
+
+class TestPandocCmd:
+    def _variables(self, cmd: list) -> dict:
+        """Extract --variable key=value pairs from a pandoc command list."""
+        out = {}
+        for i, arg in enumerate(cmd):
+            if arg == '--variable' and i + 1 < len(cmd):
+                k, _, v = cmd[i + 1].partition('=')
+                out[k] = v
+        return out
+
+    def test_uses_scrartcl_for_large_font_support(self, tmp_path):
+        # given — scrartcl (KOMA-Script) supports arbitrary font sizes unlike article
+        cmd = _pandoc_cmd(tmp_path / 'in.md', tmp_path / 'out.pdf', tmp_path)
+        assert self._variables(cmd)['documentclass'] == 'scrartcl'
+
+    def test_font_size_is_40_percent_larger_than_default(self, tmp_path):
+        # given — default was 11pt; 11 * 1.4 = 15.4 → 15pt
+        cmd = _pandoc_cmd(tmp_path / 'in.md', tmp_path / 'out.pdf', tmp_path)
+        assert self._variables(cmd)['fontsize'] == '15pt'
+
+    def test_line_spacing_is_25_percent_larger_than_default(self, tmp_path):
+        # given — default was 1.3; 1.3 * 1.25 = 1.625
+        cmd = _pandoc_cmd(tmp_path / 'in.md', tmp_path / 'out.pdf', tmp_path)
+        assert self._variables(cmd)['linestretch'] == '1.625'
