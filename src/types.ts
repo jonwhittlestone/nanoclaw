@@ -55,6 +55,11 @@ export interface NewMessage {
   reply_to_message_id?: string;
   reply_to_message_content?: string;
   reply_to_sender_name?: string;
+  media?: {
+    path: string;
+    mimeType: string;
+    fileName?: string;
+  };
 }
 
 export interface ScheduledTask {
@@ -95,6 +100,13 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: send a file. Channels that support it implement it.
+  sendFile?(
+    jid: string,
+    filePath: string,
+    mimeType: string,
+    caption?: string,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

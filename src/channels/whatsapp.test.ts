@@ -6,6 +6,7 @@ import { EventEmitter } from 'events';
 // Mock config
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
+  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   ASSISTANT_NAME: 'Andy',
   ASSISTANT_HAS_OWN_NUMBER: false,
 }));
@@ -37,6 +38,8 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      readFileSync: vi.fn(),
     },
   };
 });
@@ -89,6 +92,7 @@ vi.mock('@whiskeysockets/baileys', () => {
     fetchLatestWaWebVersion: vi
       .fn()
       .mockResolvedValue({ version: [2, 3000, 0] }),
+    downloadMediaMessage: vi.fn(),
     normalizeMessageContent: vi.fn((content: unknown) => content),
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
@@ -103,6 +107,9 @@ vi.mock('@whiskeysockets/baileys', () => {
 
 import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
+import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import { NewMessage } from '../types.js';
 
 // --- Test helpers ---
 
@@ -947,6 +954,119 @@ describe('WhatsAppChannel', () => {
     it('does not expose prefixAssistantName (prefix handled internally)', () => {
       const channel = new WhatsAppChannel(createTestOpts());
       expect('prefixAssistantName' in channel).toBe(false);
+    });
+  });
+
+  // --- Inbound media ---
+
+  describe('inbound media', () => {
+    it('downloads image and sets media on the delivered message', async () => {
+      const fakeBuffer = Buffer.from('fake-image-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValue(fakeBuffer as any);
+
+      const opts = createTestOpts({
+        registeredGroups: vi.fn(() => ({
+          '1111@g.us': { name: 'Test', folder: 'testgroup', trigger: '@Andy', added_at: '' },
+        })),
+      });
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: { remoteJid: '1111@g.us', id: 'msg-img-01', fromMe: false },
+          message: { imageMessage: { caption: '', mimetype: 'image/jpeg' } },
+          pushName: 'Jon',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const delivered = vi.mocked(opts.onMessage).mock.calls[0][1] as NewMessage;
+      expect(delivered.media?.mimeType).toBe('image/jpeg');
+      expect(delivered.media?.path).toMatch(/msg-img-01\.jpg$/);
+    });
+
+    it('delivers image-only message (no caption) when media is present', async () => {
+      const fakeBuffer = Buffer.from('fake-image-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValue(fakeBuffer as any);
+
+      const opts = createTestOpts({
+        registeredGroups: vi.fn(() => ({
+          '1111@g.us': { name: 'Test', folder: 'testgroup', trigger: '@Andy', added_at: '' },
+        })),
+      });
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: { remoteJid: '1111@g.us', id: 'msg-img-02', fromMe: false },
+          message: { imageMessage: { mimetype: 'image/jpeg' } },
+          pushName: 'Jon',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call downloadMediaMessage for plain text messages', async () => {
+      vi.mocked(downloadMediaMessage).mockClear();
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: { remoteJid: 'registered@g.us', id: 'msg-text-01', fromMe: false },
+          message: { conversation: 'Just text' },
+          pushName: 'Jon',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- Outbound sendFile ---
+
+  describe('sendFile', () => {
+    it('sends document via sock.sendMessage', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      const fakeBuffer = Buffer.from('pdf-bytes');
+      vi.mocked(fs.readFileSync).mockReturnValue(fakeBuffer);
+
+      await channel.sendFile!('registered@g.us', '/some/path/out.pdf', 'application/pdf', 'Here is the PDF');
+
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('registered@g.us', {
+        document: fakeBuffer,
+        fileName: 'out.pdf',
+        mimetype: 'application/pdf',
+        caption: 'Here is the PDF',
+      });
+    });
+
+    it('sends image via sock.sendMessage', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      const fakeBuffer = Buffer.from('image-bytes');
+      vi.mocked(fs.readFileSync).mockReturnValue(fakeBuffer);
+
+      await channel.sendFile!('registered@g.us', '/some/path/photo.jpg', 'image/jpeg', 'Check this out');
+
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('registered@g.us', {
+        image: fakeBuffer,
+        caption: 'Check this out',
+        mimetype: 'image/jpeg',
+      });
     });
   });
 });
