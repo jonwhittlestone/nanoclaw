@@ -320,12 +320,17 @@ export class WhatsAppChannel implements Channel {
                 media = {
                   path: mediaPath,
                   mimeType: this.mediaMimeType(normalized),
-                  fileName:
-                    normalized?.documentMessage?.fileName ?? fileName,
+                  fileName: normalized?.documentMessage?.fileName ?? fileName,
                 };
-                logger.info({ mediaPath, mimeType: media.mimeType }, 'Media saved');
+                logger.info(
+                  { mediaPath, mimeType: media.mimeType },
+                  'Media saved',
+                );
               } catch (err) {
-                logger.warn({ err, id: msg.key.id }, 'Failed to download media, skipping');
+                logger.warn(
+                  { err, id: msg.key.id },
+                  'Failed to download media, skipping',
+                );
               }
             }
 
@@ -439,6 +444,27 @@ export class WhatsAppChannel implements Channel {
 
   async syncGroups(force: boolean): Promise<void> {
     return this.syncGroupMetadata(force);
+  }
+
+  async sendFile(
+    jid: string,
+    filePath: string,
+    mimeType: string,
+    caption?: string,
+  ): Promise<void> {
+    const buffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+    const isImage = mimeType.startsWith('image/');
+    const messageContent = isImage
+      ? { image: buffer, caption: caption ?? '', mimetype: mimeType }
+      : { document: buffer, fileName, mimetype: mimeType, caption: caption ?? '' };
+    try {
+      await this.sock.sendMessage(jid, messageContent);
+      logger.info({ jid, fileName, mimeType }, 'File sent');
+    } catch (err) {
+      logger.warn({ jid, fileName, err }, 'Failed to send file');
+      throw err;
+    }
   }
 
   /**
