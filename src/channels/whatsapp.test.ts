@@ -542,7 +542,10 @@ describe('WhatsAppChannel', () => {
       );
     });
 
-    it('handles message with no extractable text (e.g. voice note without caption)', async () => {
+    it('delivers voice note with media set (no text caption)', async () => {
+      const fakeBuffer = Buffer.from('audio-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValue(fakeBuffer as any);
+
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
@@ -564,8 +567,10 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Skipped — no text content to process
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      // Voice notes now delivered with media.path so agent can handle them
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const delivered = vi.mocked(opts.onMessage).mock.calls[0][1] as NewMessage;
+      expect(delivered.media?.path).toMatch(/msg-8\.ogg$/);
     });
 
     it('uses sender JID when pushName is absent', async () => {
@@ -966,7 +971,12 @@ describe('WhatsAppChannel', () => {
 
       const opts = createTestOpts({
         registeredGroups: vi.fn(() => ({
-          '1111@g.us': { name: 'Test', folder: 'testgroup', trigger: '@Andy', added_at: '' },
+          '1111@g.us': {
+            name: 'Test',
+            folder: 'testgroup',
+            trigger: '@Andy',
+            added_at: '',
+          },
         })),
       });
       const channel = new WhatsAppChannel(opts);
@@ -982,7 +992,8 @@ describe('WhatsAppChannel', () => {
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledTimes(1);
-      const delivered = vi.mocked(opts.onMessage).mock.calls[0][1] as NewMessage;
+      const delivered = vi.mocked(opts.onMessage).mock
+        .calls[0][1] as NewMessage;
       expect(delivered.media?.mimeType).toBe('image/jpeg');
       expect(delivered.media?.path).toMatch(/msg-img-01\.jpg$/);
     });
@@ -993,7 +1004,12 @@ describe('WhatsAppChannel', () => {
 
       const opts = createTestOpts({
         registeredGroups: vi.fn(() => ({
-          '1111@g.us': { name: 'Test', folder: 'testgroup', trigger: '@Andy', added_at: '' },
+          '1111@g.us': {
+            name: 'Test',
+            folder: 'testgroup',
+            trigger: '@Andy',
+            added_at: '',
+          },
         })),
       });
       const channel = new WhatsAppChannel(opts);
@@ -1020,7 +1036,11 @@ describe('WhatsAppChannel', () => {
 
       await triggerMessages([
         {
-          key: { remoteJid: 'registered@g.us', id: 'msg-text-01', fromMe: false },
+          key: {
+            remoteJid: 'registered@g.us',
+            id: 'msg-text-01',
+            fromMe: false,
+          },
           message: { conversation: 'Just text' },
           pushName: 'Jon',
           messageTimestamp: Math.floor(Date.now() / 1000),
@@ -1042,7 +1062,12 @@ describe('WhatsAppChannel', () => {
       const fakeBuffer = Buffer.from('pdf-bytes');
       vi.mocked(fs.readFileSync).mockReturnValue(fakeBuffer);
 
-      await channel.sendFile!('registered@g.us', '/some/path/out.pdf', 'application/pdf', 'Here is the PDF');
+      await channel.sendFile!(
+        'registered@g.us',
+        '/some/path/out.pdf',
+        'application/pdf',
+        'Here is the PDF',
+      );
 
       expect(fakeSocket.sendMessage).toHaveBeenCalledWith('registered@g.us', {
         document: fakeBuffer,
@@ -1060,7 +1085,12 @@ describe('WhatsAppChannel', () => {
       const fakeBuffer = Buffer.from('image-bytes');
       vi.mocked(fs.readFileSync).mockReturnValue(fakeBuffer);
 
-      await channel.sendFile!('registered@g.us', '/some/path/photo.jpg', 'image/jpeg', 'Check this out');
+      await channel.sendFile!(
+        'registered@g.us',
+        '/some/path/photo.jpg',
+        'image/jpeg',
+        'Check this out',
+      );
 
       expect(fakeSocket.sendMessage).toHaveBeenCalledWith('registered@g.us', {
         image: fakeBuffer,

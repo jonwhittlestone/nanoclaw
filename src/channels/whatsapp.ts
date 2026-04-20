@@ -6,6 +6,7 @@ import {
   makeWASocket,
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
@@ -26,6 +27,7 @@ const { proto } = createRequire(import.meta.url)('@whiskeysockets/baileys') as {
 import {
   ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
+  GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
 import {
@@ -41,6 +43,7 @@ import pino from 'pino';
 const baileysLogger = pino({ level: 'silent' });
 import {
   Channel,
+  NewMessage,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -302,8 +305,32 @@ export class WhatsAppChannel implements Channel {
               );
             }
 
-            // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-            if (!content) continue;
+            // Download and save media attachment if present
+            let media: NewMessage['media'];
+            const ext = this.mediaExtension(normalized);
+            if (ext && msg.key.id) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupFolder = groups[chatJid].folder;
+                const mediaDir = path.join(GROUPS_DIR, groupFolder, 'media');
+                fs.mkdirSync(mediaDir, { recursive: true });
+                const fileName = `${msg.key.id}.${ext}`;
+                const mediaPath = path.join(mediaDir, fileName);
+                fs.writeFileSync(mediaPath, buffer as Buffer);
+                media = {
+                  path: mediaPath,
+                  mimeType: this.mediaMimeType(normalized),
+                  fileName:
+                    normalized?.documentMessage?.fileName ?? fileName,
+                };
+                logger.info({ mediaPath, mimeType: media.mimeType }, 'Media saved');
+              } catch (err) {
+                logger.warn({ err, id: msg.key.id }, 'Failed to download media, skipping');
+              }
+            }
+
+            // Skip protocol messages with no text and no media (encryption keys, read receipts, etc.)
+            if (!content && !media) continue;
 
             const sender = msg.key.participant || msg.key.remoteJid || '';
             const senderName = msg.pushName || sender.split('@')[0];
@@ -326,6 +353,7 @@ export class WhatsAppChannel implements Channel {
               timestamp,
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
+              media,
             });
           } else if (chatJid !== rawJid) {
             // LID translation produced a JID that doesn't match any registered group
@@ -525,6 +553,29 @@ export class WhatsAppChannel implements Channel {
       expiresAt: Date.now() + 60_000,
     });
     return normalized;
+  }
+
+  private mediaExtension(
+    normalized: ReturnType<typeof normalizeMessageContent>,
+  ): string | null {
+    if (normalized?.imageMessage) return 'jpg';
+    if (normalized?.documentMessage)
+      return normalized.documentMessage.fileName?.split('.').pop() ?? 'bin';
+    if (normalized?.audioMessage) return 'ogg';
+    if (normalized?.videoMessage) return 'mp4';
+    return null;
+  }
+
+  private mediaMimeType(
+    normalized: ReturnType<typeof normalizeMessageContent>,
+  ): string {
+    return (
+      normalized?.imageMessage?.mimetype ??
+      normalized?.documentMessage?.mimetype ??
+      normalized?.audioMessage?.mimetype ??
+      normalized?.videoMessage?.mimetype ??
+      'application/octet-stream'
+    );
   }
 
   private async flushOutgoingQueue(): Promise<void> {
