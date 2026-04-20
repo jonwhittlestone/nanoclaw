@@ -569,8 +569,9 @@ describe('WhatsAppChannel', () => {
 
       // Voice notes now delivered with media.path so agent can handle them
       expect(opts.onMessage).toHaveBeenCalledTimes(1);
-      const delivered = vi.mocked(opts.onMessage).mock.calls[0][1] as NewMessage;
-      expect(delivered.media?.path).toMatch(/msg-8\.ogg$/);
+      const delivered = vi.mocked(opts.onMessage).mock
+        .calls[0][1] as NewMessage;
+      expect(delivered.media?.path).toBe('/workspace/group/media/msg-8.ogg');
     });
 
     it('uses sender JID when pushName is absent', async () => {
@@ -995,7 +996,7 @@ describe('WhatsAppChannel', () => {
       const delivered = vi.mocked(opts.onMessage).mock
         .calls[0][1] as NewMessage;
       expect(delivered.media?.mimeType).toBe('image/jpeg');
-      expect(delivered.media?.path).toMatch(/msg-img-01\.jpg$/);
+      expect(delivered.media?.path).toBe('/workspace/group/media/msg-img-01.jpg');
     });
 
     it('delivers image-only message (no caption) when media is present', async () => {

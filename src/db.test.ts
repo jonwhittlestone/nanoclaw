@@ -220,6 +220,78 @@ describe('reply context', () => {
     expect(messages[0].reply_to_message_id).toBe('99');
     expect(messages[0].reply_to_sender_name).toBe('Dave');
   });
+
+  it('stores and retrieves media attachment', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'msg-media-1',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: '',
+      timestamp: '2024-01-01T00:00:10.000Z',
+      media: {
+        path: '/workspace/group/media/msg-media-1.jpg',
+        mimeType: 'image/jpeg',
+        fileName: 'photo.jpg',
+      },
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].media?.path).toBe('/workspace/group/media/msg-media-1.jpg');
+    expect(messages[0].media?.mimeType).toBe('image/jpeg');
+    expect(messages[0].media?.fileName).toBe('photo.jpg');
+  });
+
+  it('retrieves media-only message (empty content) when media is present', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'msg-media-2',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: '',
+      timestamp: '2024-01-01T00:00:11.000Z',
+      media: {
+        path: '/workspace/group/media/msg-media-2.jpg',
+        mimeType: 'image/jpeg',
+      },
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+  });
+
+  it('still filters empty content with no media', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'msg-empty',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: '',
+      timestamp: '2024-01-01T00:00:12.000Z',
+    });
+
+    const messages = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(0);
+  });
 });
 
 // --- getMessagesSince ---

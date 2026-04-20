@@ -19,11 +19,14 @@ export function formatMessages(
     const replyAttr = m.reply_to_message_id
       ? ` reply_to="${escapeXml(m.reply_to_message_id)}"`
       : '';
+    const mediaAttr = m.media
+      ? ` media_path="${escapeXml(m.media.path)}" media_type="${escapeXml(m.media.mimeType)}"${m.media.fileName ? ` media_file_name="${escapeXml(m.media.fileName)}"` : ''}`
+      : '';
     const replySnippet =
       m.reply_to_message_content && m.reply_to_sender_name
         ? `\n  <quoted_message from="${escapeXml(m.reply_to_sender_name)}">${escapeXml(m.reply_to_message_content)}</quoted_message>`
         : '';
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${replyAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
+    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${replyAttr}${mediaAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
   });
 
   const header = `<context timezone="${escapeXml(timezone)}" />\n`;

@@ -315,15 +315,15 @@ export class WhatsAppChannel implements Channel {
                 const mediaDir = path.join(GROUPS_DIR, groupFolder, 'media');
                 fs.mkdirSync(mediaDir, { recursive: true });
                 const fileName = `${msg.key.id}.${ext}`;
-                const mediaPath = path.join(mediaDir, fileName);
-                fs.writeFileSync(mediaPath, buffer as Buffer);
+                const hostPath = path.join(mediaDir, fileName);
+                fs.writeFileSync(hostPath, buffer as Buffer);
                 media = {
-                  path: mediaPath,
+                  path: `/workspace/group/media/${fileName}`,
                   mimeType: this.mediaMimeType(normalized),
                   fileName: normalized?.documentMessage?.fileName ?? fileName,
                 };
                 logger.info(
-                  { mediaPath, mimeType: media.mimeType },
+                  { hostPath, containerPath: media.path, mimeType: media.mimeType },
                   'Media saved',
                 );
               } catch (err) {
@@ -457,7 +457,12 @@ export class WhatsAppChannel implements Channel {
     const isImage = mimeType.startsWith('image/');
     const messageContent = isImage
       ? { image: buffer, caption: caption ?? '', mimetype: mimeType }
-      : { document: buffer, fileName, mimetype: mimeType, caption: caption ?? '' };
+      : {
+          document: buffer,
+          fileName,
+          mimetype: mimeType,
+          caption: caption ?? '',
+        };
     try {
       await this.sock.sendMessage(jid, messageContent);
       logger.info({ jid, fileName, mimeType }, 'File sent');
