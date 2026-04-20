@@ -244,7 +244,9 @@ describe('reply context', () => {
       'Andy',
     );
     expect(messages).toHaveLength(1);
-    expect(messages[0].media?.path).toBe('/workspace/group/media/msg-media-1.jpg');
+    expect(messages[0].media?.path).toBe(
+      '/workspace/group/media/msg-media-1.jpg',
+    );
     expect(messages[0].media?.mimeType).toBe('image/jpeg');
     expect(messages[0].media?.fileName).toBe('photo.jpg');
   });

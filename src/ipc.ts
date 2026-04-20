@@ -31,7 +31,10 @@ export interface IpcDeps {
   onTasksChanged: () => void;
 }
 
-function resolveContainerPath(containerPath: string, groupFolder: string): string {
+function resolveContainerPath(
+  containerPath: string,
+  groupFolder: string,
+): string {
   const prefix = '/workspace/group/';
   if (!containerPath.startsWith(prefix)) {
     throw new Error(

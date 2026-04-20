@@ -996,7 +996,9 @@ describe('WhatsAppChannel', () => {
       const delivered = vi.mocked(opts.onMessage).mock
         .calls[0][1] as NewMessage;
       expect(delivered.media?.mimeType).toBe('image/jpeg');
-      expect(delivered.media?.path).toBe('/workspace/group/media/msg-img-01.jpg');
+      expect(delivered.media?.path).toBe(
+        '/workspace/group/media/msg-img-01.jpg',
+      );
     });
 
     it('delivers image-only message (no caption) when media is present', async () => {

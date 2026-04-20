@@ -54,7 +54,7 @@ import json, shutil
 from pathlib import Path
 from datetime import date
 
-VAULT = Path('/workspace/extra/jw-mind')
+VAULT = Path('/workspace/extra/obsidian')
 
 def get_attachment_folder(vault: Path) -> Path:
     app_json = vault / '.obsidian' / 'app.json'
@@ -76,9 +76,43 @@ with open(daily_note, 'a') as f:
     f.write(f'\n![[{src.name}]]\n')
 ```
 
-(Requires vault mounted at `/workspace/extra/jw-mind/` via `additionalMounts`.)
+(Requires vault mounted via `additionalMounts` with `containerPath: "obsidian"` — available at `/workspace/extra/obsidian/`.)
 
 ## Outbound: sending a file back
+
+### Sending a file from the vault
+
+Vault files are at `/workspace/extra/obsidian/` — **not** under `/workspace/group/`, so you must copy the file to the group workspace first:
+
+```python
+import shutil, uuid
+from pathlib import Path
+
+VAULT = Path('/workspace/extra/obsidian')
+
+def get_attachment_folder(vault: Path) -> Path:
+    import json
+    app_json = vault / '.obsidian' / 'app.json'
+    if app_json.exists():
+        cfg = json.loads(app_json.read_text())
+        folder = cfg.get('attachmentFolderPath', '')
+        if folder and not folder.startswith('/'):
+            return vault / folder
+    return vault
+
+# Find the file in the vault
+attachments = get_attachment_folder(VAULT)
+src = attachments / 'my-image.jpg'           # wherever it lives in the vault
+
+# Stage it under /workspace/group/ so ipc.ts can translate the path
+staging = Path('/workspace/group/media') / src.name
+staging.parent.mkdir(exist_ok=True)
+shutil.copy2(src, staging)
+```
+
+Then write the IPC message (see below) with `filePath` pointing to `/workspace/group/media/<filename>`.
+
+### IPC message format
 
 Write a JSON file to `/workspace/ipc/messages/<uuid>.json`:
 
@@ -105,11 +139,11 @@ For journal photo use cases, the vault must be in `additionalMounts` in the grou
   "additionalMounts": [
     {
       "hostPath": "~/Dropbox/DropsyncFiles/jw-mind",
-      "containerPath": "jw-mind",
+      "containerPath": "obsidian",
       "readonly": false
     }
   ]
 }
 ```
 
-The vault is then accessible at `/workspace/extra/jw-mind/` inside the container.
+The vault is then accessible at `/workspace/extra/obsidian/` inside the container.

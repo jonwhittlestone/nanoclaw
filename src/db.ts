@@ -379,7 +379,11 @@ export function getNewMessages(
     const { media_path, media_mime_type, media_file_name, ...rest } = row;
     const msg: NewMessage = rest;
     if (media_path && media_mime_type) {
-      msg.media = { path: media_path, mimeType: media_mime_type, fileName: media_file_name ?? undefined };
+      msg.media = {
+        path: media_path,
+        mimeType: media_mime_type,
+        fileName: media_file_name ?? undefined,
+      };
     }
     return msg;
   });
@@ -427,7 +431,11 @@ export function getMessagesSince(
     const { media_path, media_mime_type, media_file_name, ...rest } = row;
     const msg: NewMessage = rest;
     if (media_path && media_mime_type) {
-      msg.media = { path: media_path, mimeType: media_mime_type, fileName: media_file_name ?? undefined };
+      msg.media = {
+        path: media_path,
+        mimeType: media_mime_type,
+        fileName: media_file_name ?? undefined,
+      };
     }
     return msg;
   });
