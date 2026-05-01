@@ -30,6 +30,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import { transcribeAudio } from '../transcription.js';
 import {
   getLastGroupSync,
   getMessageContentById,
@@ -321,9 +322,10 @@ export class WhatsAppChannel implements Channel {
                 const fileName = `${msg.key.id}.${ext}`;
                 const hostPath = path.join(mediaDir, fileName);
                 fs.writeFileSync(hostPath, buffer as Buffer);
+                const mimeType = this.mediaMimeType(normalized);
                 media = {
                   path: `/workspace/group/media/${fileName}`,
-                  mimeType: this.mediaMimeType(normalized),
+                  mimeType,
                   fileName: normalized?.documentMessage?.fileName ?? fileName,
                 };
                 logger.info(
@@ -334,6 +336,15 @@ export class WhatsAppChannel implements Channel {
                   },
                   'Media saved',
                 );
+
+                // Transcribe audio/voice messages and inject as [Voice] content
+                if (mimeType.startsWith('audio/')) {
+                  const transcript = await transcribeAudio(hostPath);
+                  media.transcript = transcript || undefined;
+                  content = transcript
+                    ? `[Voice] ${transcript}`
+                    : '[Voice message — transcription unavailable]';
+                }
               } catch (err) {
                 logger.warn(
                   { err, id: msg.key.id },

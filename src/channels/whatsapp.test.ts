@@ -21,6 +21,11 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+// Mock transcription — default to empty string (no audio transcription in most tests)
+vi.mock('../transcription.js', () => ({
+  transcribeAudio: vi.fn().mockResolvedValue(''),
+}));
+
 // Mock db
 vi.mock('../db.js', () => ({
   getLastGroupSync: vi.fn(() => null),
