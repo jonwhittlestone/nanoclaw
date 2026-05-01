@@ -60,6 +60,8 @@ export const MAX_MESSAGES_PER_PROMPT = Math.max(
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
 );
 export const IPC_POLL_INTERVAL = 1000;
+export const WHISPER_SERVER_URL =
+  process.env.WHISPER_SERVER_URL ?? 'http://127.0.0.1:8080';
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
