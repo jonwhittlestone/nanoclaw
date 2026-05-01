@@ -348,3 +348,49 @@ describe('trigger gating (requiresTrigger interaction)', () => {
     expect(shouldProcess(false, false, undefined, msgs)).toBe(true);
   });
 });
+
+// --- formatMessages: media attributes ---
+
+describe('formatMessages media', () => {
+  const TZ = 'UTC';
+
+  it('includes media_path and media_type attributes for image message', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: '',
+          media: {
+            path: '/workspace/group/media/abc123.jpg',
+            mimeType: 'image/jpeg',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('media_path="/workspace/group/media/abc123.jpg"');
+    expect(result).toContain('media_type="image/jpeg"');
+  });
+
+  it('includes media_file_name attribute when present', () => {
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'see attached',
+          media: {
+            path: '/workspace/group/media/doc.pdf',
+            mimeType: 'application/pdf',
+            fileName: 'report.pdf',
+          },
+        }),
+      ],
+      TZ,
+    );
+    expect(result).toContain('media_file_name="report.pdf"');
+  });
+
+  it('omits media attributes when no media', () => {
+    const result = formatMessages([makeMsg()], TZ);
+    expect(result).not.toContain('media_path');
+    expect(result).not.toContain('media_type');
+  });
+});

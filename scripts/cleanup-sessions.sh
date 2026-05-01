@@ -11,6 +11,7 @@
 #   Todo files:                     3 days
 #   Telemetry:                      7 days
 #   Group logs:                     7 days
+#   Media staging files:            2 days
 
 set -euo pipefail
 
@@ -140,6 +141,13 @@ done
 while IFS= read -r -d '' f; do
   remove "$f"
 done < <(find "$GROUPS_DIR"/*/logs -type f -mtime +7 -print0 2>/dev/null)
+
+# --- Prune media files (>2 days) ---
+# media/ is a staging area: agent copies to vault on receipt, original not needed.
+
+while IFS= read -r -d '' f; do
+  remove "$f"
+done < <(find "$GROUPS_DIR"/*/media -type f -mtime +2 -print0 2>/dev/null)
 
 # --- Summary ---
 

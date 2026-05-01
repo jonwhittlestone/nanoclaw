@@ -3,6 +3,7 @@ node_modules/
 .npm-cache/
 # Build output
 dist/
+dist-tools/
 
 # Local data & auth
 store/
@@ -22,6 +23,9 @@ groups/global/*
 *.keys.json
 .env
 
+# Python virtual environments (use UV_PROJECT_ENVIRONMENT to store outside Dropbox)
+.venv/
+
 # Temp files
 .tmp-*
 
@@ -36,3 +40,5 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+__pycache__/
+repos-nanoclaw.code-workspace
