@@ -4,11 +4,18 @@ import { transcribeAudio } from './transcription.js';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn().mockResolvedValue(Buffer.from('fake-audio')),
+  unlink: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('node:child_process', () => ({
   execFile: vi.fn((_cmd, _args, cb) => cb(null, '', '')),
 }));
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('transcribeAudio', () => {
   it('returns transcript from whisper.cpp response', async () => {
