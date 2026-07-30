@@ -113,7 +113,9 @@ vi.mock('@whiskeysockets/baileys', () => {
 import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import { exec } from 'child_process';
 import fs from 'fs';
+import { logger } from '../logger.js';
 import { NewMessage } from '../types.js';
 
 // --- Test helpers ---
@@ -164,6 +166,11 @@ describe('WhatsAppChannel', () => {
   });
 
   afterEach(() => {
+    // A safety net for any test that switches to fake timers: if an
+    // assertion throws before that test's own vi.useRealTimers() call, fake
+    // timers would otherwise leak into every subsequent test and hang them
+    // on their real-timer-based setTimeout waits.
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -294,6 +301,37 @@ describe('WhatsAppChannel', () => {
       mockExit.mockRestore();
       vi.useRealTimers();
     });
+
+    it('notifies via a Linux desktop notification, not the macOS-only osascript', async () => {
+      // osascript silently no-ops on Linux (the actual deployment
+      // platform), so a QR-required event would otherwise go completely
+      // unnoticed. This process isn't macOS, so notify-send should fire.
+      vi.useFakeTimers();
+      const mockExit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      channel.connect().catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+
+      fakeSocket._ev.emit('connection.update', { qr: 'some-qr-data' });
+      await vi.advanceTimersByTimeAsync(1500);
+
+      expect(exec).toHaveBeenCalledWith(
+        expect.stringContaining('notify-send'),
+        expect.any(Function),
+      );
+      expect(exec).not.toHaveBeenCalledWith(
+        expect.stringContaining('osascript'),
+        expect.any(Function),
+      );
+
+      mockExit.mockRestore();
+      vi.useRealTimers();
+    });
   });
 
   // --- Reconnection behavior ---
@@ -343,6 +381,104 @@ describe('WhatsAppChannel', () => {
 
       // The channel sets a 5s retry — just verify it doesn't crash
       await new Promise((r) => setTimeout(r, 100));
+    });
+
+    it('backs off exponentially over consecutive failed disconnects', async () => {
+      // A burst of near-instant reconnect attempts (no backoff) was the
+      // observed pattern right before a WhatsApp session got fully revoked
+      // — this guards against ever going back to reconnecting immediately.
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      // connectChannel's microtask flush relies on a real setTimeout, so
+      // fake timers can only be switched on once that's done — otherwise
+      // that flush never fires and the test hangs.
+      vi.useFakeTimers();
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 1000 },
+        'Reconnecting...',
+      );
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 2000 },
+        'Reconnecting...',
+      );
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 4000 },
+        'Reconnecting...',
+      );
+
+      vi.useRealTimers();
+    });
+
+    it('caps backoff delay rather than growing unbounded', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      vi.useFakeTimers();
+
+      // Enough consecutive failures to exceed the 30s cap if uncapped
+      // (1000 * 2^n would blow past 30000 well before n=8).
+      for (let i = 0; i < 8; i++) {
+        triggerDisconnect(428);
+        await vi.advanceTimersByTimeAsync(0);
+      }
+
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 30000 },
+        'Reconnecting...',
+      );
+
+      vi.useRealTimers();
+    });
+
+    it('resets backoff to the base delay after a successful reconnect', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+      await connectChannel(channel);
+
+      vi.useFakeTimers();
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 1000 },
+        'Reconnecting...',
+      );
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 2000 },
+        'Reconnecting...',
+      );
+
+      // Simulate the pending scheduled reconnect succeeding — without
+      // actually letting it fire and call connectInternal() again, which
+      // would register a second 'connection.update' listener on the same
+      // mocked socket (it's a plain EventEmitter, not swapped out per
+      // connectInternal() call in this test harness) and double-fire
+      // every event after this point.
+      triggerConnection('open');
+
+      triggerDisconnect(428);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        { delayMs: 1000 },
+        'Reconnecting...',
+      );
+
+      vi.useRealTimers();
     });
   });
 
