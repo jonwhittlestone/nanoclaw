@@ -42,12 +42,18 @@ const successResult =
 // so mocks must actually invoke onProcess/onOutput synchronously, the way
 // the real implementation does when a result arrives, rather than just
 // resolving a promise the way container-runner's *return value* would.
-function mockImmediateOutput(output: { status: string; result?: string | null; error?: string }) {
-  runContainerAgent.mockImplementation((_group, _input, onProcess, onOutput) => {
-    onProcess({} as never, 'fake-container-name');
-    onOutput(output);
-    return Promise.resolve({ status: 'success', result: null });
-  });
+function mockImmediateOutput(output: {
+  status: string;
+  result?: string | null;
+  error?: string;
+}) {
+  runContainerAgent.mockImplementation(
+    (_group, _input, onProcess, onOutput) => {
+      onProcess({} as never, 'fake-container-name');
+      onOutput(output);
+      return Promise.resolve({ status: 'success', result: null });
+    },
+  );
 }
 
 describe('parseAgentJson', () => {
@@ -267,15 +273,17 @@ describe('POST /internal/journal/draft', () => {
     // given — onOutput is never called until releaseAll() below fires every
     // pending resolver, so both slots stay occupied
     const resolvers: Array<() => void> = [];
-    runContainerAgent.mockImplementation((_group, _input, onProcess, onOutput) => {
-      onProcess({} as never, 'fake-container-name');
-      return new Promise((resolve) => {
-        resolvers.push(() => {
-          onOutput({ status: 'success', result: successResult });
-          resolve({ status: 'success', result: null });
+    runContainerAgent.mockImplementation(
+      (_group, _input, onProcess, onOutput) => {
+        onProcess({} as never, 'fake-container-name');
+        return new Promise((resolve) => {
+          resolvers.push(() => {
+            onOutput({ status: 'success', result: successResult });
+            resolve({ status: 'success', result: null });
+          });
         });
-      });
-    });
+      },
+    );
     const app = createJournalDraftApp();
 
     // when — fire 2 (the configured max) concurrent requests, then a 3rd.
