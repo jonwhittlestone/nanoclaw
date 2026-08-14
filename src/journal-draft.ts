@@ -23,6 +23,7 @@ import {
   JOURNAL_DRAFT_PORT,
 } from './config.js';
 import { runContainerAgent } from './container-runner.js';
+import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -94,26 +95,63 @@ export function parseAgentJson(result: string | null): JournalDraftResult {
 export async function draftJournalEntry(
   req: JournalDraftRequest,
 ): Promise<JournalDraftResult> {
-  const output = await runContainerAgent(
-    JOURNAL_DRAFT_GROUP,
-    {
-      prompt: buildPrompt(req),
-      groupFolder: JOURNAL_DRAFT_GROUP.folder,
-      chatJid: 'journal-draft@web',
-      isMain: false,
-    },
-    // No process tracking needed — this is a one-shot call outside the
-    // group-queue, so there's no queue entry to register the process
-    // against (unlike index.ts's invokeAgent, which registers with
-    // queue.registerProcess for cancellation/cleanup).
-    () => {},
-  );
+  return new Promise<JournalDraftResult>((resolve, reject) => {
+    let containerName: string | undefined;
+    let settled = false;
 
-  if (output.status === 'error') {
-    throw new Error(output.error || 'agent error');
-  }
+    // Non-main containers are left running after their result (matches
+    // chat-group behavior, where staying alive lets a follow-up message
+    // reuse the same session cheaply — see IDLE_TIMEOUT). This endpoint is
+    // genuinely one-shot: nothing will ever send a follow-up turn to it, so
+    // waiting for the container to exit on its own (up to IDLE_TIMEOUT,
+    // 30min default) would leave the caller hanging long after the actual
+    // answer is ready. Passing onOutput puts runContainerAgent in
+    // streaming mode, which calls back the moment a result is parsed from
+    // the container's stdout — resolve right there instead of waiting for
+    // the process to close, then stop the container explicitly.
+    runContainerAgent(
+      JOURNAL_DRAFT_GROUP,
+      {
+        prompt: buildPrompt(req),
+        groupFolder: JOURNAL_DRAFT_GROUP.folder,
+        chatJid: 'journal-draft@web',
+        isMain: false,
+      },
+      (_proc, name) => {
+        containerName = name;
+      },
+      async (output) => {
+        if (settled) return; // only the first result matters for a one-shot call
+        settled = true;
 
-  return parseAgentJson(output.result);
+        if (output.status === 'error') {
+          reject(new Error(output.error || 'agent error'));
+        } else {
+          try {
+            resolve(parseAgentJson(output.result));
+          } catch (err) {
+            reject(err);
+          }
+        }
+
+        if (containerName) {
+          try {
+            stopContainer(containerName);
+          } catch (err) {
+            logger.warn(
+              { err, containerName },
+              'failed to stop journal-draft container after result',
+            );
+          }
+        }
+      },
+    ).catch((err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+  });
 }
 
 function isNonEmptyString(v: unknown): v is string {

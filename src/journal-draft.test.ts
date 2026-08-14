@@ -12,10 +12,12 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { runContainerAgent } = vi.hoisted(() => ({
+const { runContainerAgent, stopContainer } = vi.hoisted(() => ({
   runContainerAgent: vi.fn(),
+  stopContainer: vi.fn(),
 }));
 vi.mock('./container-runner.js', () => ({ runContainerAgent }));
+vi.mock('./container-runtime.js', () => ({ stopContainer }));
 
 // Import after mocks are set up (vi.mock is hoisted — same pattern as
 // tools/gcal-mcp/index.test.ts)
@@ -30,6 +32,23 @@ const validBody = {
   userText: 'Great sprint retro today.',
   nowIso: '2026-08-14T11:12:00+01:00',
 };
+
+const successResult =
+  '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}';
+
+// runContainerAgent's real signature is (group, input, onProcess, onOutput).
+// draftJournalEntry resolves off the onOutput callback (streaming mode),
+// not the returned promise — see journal-draft.ts's doc comment on why —
+// so mocks must actually invoke onProcess/onOutput synchronously, the way
+// the real implementation does when a result arrives, rather than just
+// resolving a promise the way container-runner's *return value* would.
+function mockImmediateOutput(output: { status: string; result?: string | null; error?: string }) {
+  runContainerAgent.mockImplementation((_group, _input, onProcess, onOutput) => {
+    onProcess({} as never, 'fake-container-name');
+    onOutput(output);
+    return Promise.resolve({ status: 'success', result: null });
+  });
+}
 
 describe('parseAgentJson', () => {
   it('parses a bare JSON object', () => {
@@ -82,14 +101,12 @@ describe('parseAgentJson', () => {
 describe('draftJournalEntry', () => {
   beforeEach(() => {
     runContainerAgent.mockReset();
+    stopContainer.mockReset();
   });
 
   it('calls runContainerAgent with isMain:false and a dedicated group', async () => {
     // given
-    runContainerAgent.mockResolvedValue({
-      status: 'success',
-      result: '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}',
-    });
+    mockImmediateOutput({ status: 'success', result: successResult });
 
     // when
     await draftJournalEntry(validBody);
@@ -103,12 +120,50 @@ describe('draftJournalEntry', () => {
     expect(input.prompt).toContain(validBody.nowIso);
   });
 
-  it('throws when the container reports an error', async () => {
+  it('resolves as soon as the first result streams in, without waiting for the container to close', async () => {
     // given
-    runContainerAgent.mockResolvedValue({ status: 'error', error: 'boom' });
+    mockImmediateOutput({ status: 'success', result: successResult });
+
+    // when
+    const result = await draftJournalEntry(validBody);
+
+    // then
+    expect(result).toEqual({
+      heading: '## 📌 etc.',
+      insertionMarkdown: '- x',
+      reply: 'ok',
+    });
+  });
+
+  it('stops the container once a result is captured, instead of leaving it running', async () => {
+    // given
+    mockImmediateOutput({ status: 'success', result: successResult });
+
+    // when
+    await draftJournalEntry(validBody);
+
+    // then — this is the fix for the real bug found during smoke testing:
+    // non-main containers otherwise sit alive until IDLE_TIMEOUT, and the
+    // caller (a one-shot HTTP request) would hang the whole time waiting
+    // for a close event that was never coming soon.
+    expect(stopContainer).toHaveBeenCalledWith('fake-container-name');
+  });
+
+  it('throws when the container reports an error, without needing to stop first', async () => {
+    // given
+    mockImmediateOutput({ status: 'error', error: 'boom' });
 
     // when / then
     await expect(draftJournalEntry(validBody)).rejects.toThrow('boom');
+    expect(stopContainer).toHaveBeenCalledWith('fake-container-name');
+  });
+
+  it('rejects if runContainerAgent itself rejects before any output streams', async () => {
+    // given — e.g. a synchronous spawn failure, before onProcess ever fires
+    runContainerAgent.mockRejectedValue(new Error('spawn failed'));
+
+    // when / then
+    await expect(draftJournalEntry(validBody)).rejects.toThrow('spawn failed');
   });
 });
 
@@ -134,10 +189,8 @@ describe('GET /internal/journal/health', () => {
 describe('POST /internal/journal/draft', () => {
   beforeEach(() => {
     runContainerAgent.mockReset();
-    runContainerAgent.mockResolvedValue({
-      status: 'success',
-      result: '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}',
-    });
+    stopContainer.mockReset();
+    mockImmediateOutput({ status: 'success', result: successResult });
   });
 
   it('rejects requests without the bearer token', async () => {
@@ -197,7 +250,7 @@ describe('POST /internal/journal/draft', () => {
 
   it('returns 502 when the agent call fails', async () => {
     // given
-    runContainerAgent.mockResolvedValue({ status: 'error', error: 'boom' });
+    mockImmediateOutput({ status: 'error', error: 'boom' });
     const app = createJournalDraftApp();
 
     // when
@@ -211,21 +264,18 @@ describe('POST /internal/journal/draft', () => {
   });
 
   it('returns 429 once JOURNAL_DRAFT_MAX_CONCURRENT requests are in flight', async () => {
-    // given — runContainerAgent never resolves on its own, so both slots stay
-    // occupied until releaseAll() below fires every pending resolver
+    // given — onOutput is never called until releaseAll() below fires every
+    // pending resolver, so both slots stay occupied
     const resolvers: Array<() => void> = [];
-    runContainerAgent.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(() =>
-            resolve({
-              status: 'success',
-              result:
-                '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}',
-            }),
-          );
-        }),
-    );
+    runContainerAgent.mockImplementation((_group, _input, onProcess, onOutput) => {
+      onProcess({} as never, 'fake-container-name');
+      return new Promise((resolve) => {
+        resolvers.push(() => {
+          onOutput({ status: 'success', result: successResult });
+          resolve({ status: 'success', result: null });
+        });
+      });
+    });
     const app = createJournalDraftApp();
 
     // when — fire 2 (the configured max) concurrent requests, then a 3rd.
