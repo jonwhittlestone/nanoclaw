@@ -59,6 +59,7 @@ export interface NewMessage {
     path: string;
     mimeType: string;
     fileName?: string;
+    transcript?: string;
   };
 }
 

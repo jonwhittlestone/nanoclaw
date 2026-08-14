@@ -14,10 +14,13 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/journal-draft/
 groups/main/*
 groups/global/*
+groups/journal-draft/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/journal-draft/CLAUDE.md
 
 # Secrets
 *.keys.json

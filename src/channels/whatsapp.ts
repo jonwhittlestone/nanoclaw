@@ -30,6 +30,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import { transcribeAudio } from '../transcription.js';
 import {
   getLastGroupSync,
   getMessageContentById,
@@ -51,6 +52,29 @@ import {
 import { registerChannel, ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Base delay for the first reconnect attempt after a disconnect. */
+const RECONNECT_BASE_DELAY_MS = 1000;
+/** Cap so backoff doesn't grow unbounded on a sustained outage. */
+const RECONNECT_MAX_DELAY_MS = 30000;
+
+// osascript is macOS-only and silently no-ops elsewhere — on this project's
+// actual deployment host (Linux, with a logged-in desktop session) it meant
+// zero notification ever reached anyone when WhatsApp auth broke. notify-send
+// is the Linux equivalent; if neither is available (e.g. a headless box with
+// no desktop session), this just fails quietly and the logger.error call
+// at the call site is the fallback record.
+function notifyDesktop(title: string, message: string): void {
+  const command =
+    process.platform === 'darwin'
+      ? `osascript -e 'display notification "${message}" with title "${title}" sound name "Basso"'`
+      : `notify-send --urgency=critical "${title}" "${message}"`;
+  exec(command, (err) => {
+    if (err) {
+      logger.warn({ err }, 'Desktop notification failed');
+    }
+  });
+}
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -78,6 +102,9 @@ export class WhatsAppChannel implements Channel {
   private botLidUser?: string;
   /** Resolve the initial connect() once the first successful open happens. */
   private pendingFirstOpen?: () => void;
+  /** Consecutive reconnect attempts since the last successful open — drives
+   *  exponential backoff (see nextReconnectDelayMs) and resets to 0 on open. */
+  private reconnectAttempts = 0;
 
   private opts: WhatsAppChannelOpts;
 
@@ -90,6 +117,17 @@ export class WhatsAppChannel implements Channel {
       this.pendingFirstOpen = resolve;
       this.connectInternal().catch(reject);
     });
+  }
+
+  /** Exponential backoff, doubling per consecutive failed attempt and
+   *  capped at RECONNECT_MAX_DELAY_MS — see reconnectAttempts. */
+  private nextReconnectDelayMs(): number {
+    const delay = Math.min(
+      RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts,
+      RECONNECT_MAX_DELAY_MS,
+    );
+    this.reconnectAttempts++;
+    return delay;
   }
 
   private async connectInternal(): Promise<void> {
@@ -151,9 +189,7 @@ export class WhatsAppChannel implements Channel {
         const msg =
           'WhatsApp authentication required. Run /setup in Claude Code.';
         logger.error(msg);
-        exec(
-          `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
-        );
+        notifyDesktop('NanoClaw', msg);
         setTimeout(() => process.exit(1), 1000);
       }
 
@@ -173,21 +209,27 @@ export class WhatsAppChannel implements Channel {
         );
 
         if (shouldReconnect) {
-          logger.info('Reconnecting...');
-          this.connectInternal().catch((err) => {
-            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-            setTimeout(() => {
-              this.connectInternal().catch((err2) => {
-                logger.error({ err: err2 }, 'Reconnection retry failed');
-              });
-            }, 5000);
-          });
+          // Backs off exponentially per consecutive failed attempt (reset to
+          // 0 on a successful open) rather than reconnecting immediately —
+          // a burst of connectionLost/timedOut (408) disconnects was
+          // observed reconnecting essentially instantly hundreds of times
+          // within under an hour, which looks like the kind of abusive
+          // connection pattern that gets a linked device's session revoked
+          // server-side, turning a transient blip into a full QR re-auth.
+          const delay = this.nextReconnectDelayMs();
+          logger.info({ delayMs: delay }, 'Reconnecting...');
+          setTimeout(() => {
+            this.connectInternal().catch((err) => {
+              logger.error({ err }, 'Failed to reconnect');
+            });
+          }, delay);
         } else {
           logger.info('Logged out. Run /setup to re-authenticate.');
           process.exit(0);
         }
       } else if (connection === 'open') {
         this.connected = true;
+        this.reconnectAttempts = 0;
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
@@ -321,9 +363,10 @@ export class WhatsAppChannel implements Channel {
                 const fileName = `${msg.key.id}.${ext}`;
                 const hostPath = path.join(mediaDir, fileName);
                 fs.writeFileSync(hostPath, buffer as Buffer);
+                const mimeType = this.mediaMimeType(normalized);
                 media = {
                   path: `/workspace/group/media/${fileName}`,
-                  mimeType: this.mediaMimeType(normalized),
+                  mimeType,
                   fileName: normalized?.documentMessage?.fileName ?? fileName,
                 };
                 logger.info(
@@ -334,6 +377,15 @@ export class WhatsAppChannel implements Channel {
                   },
                   'Media saved',
                 );
+
+                // Transcribe audio/voice messages and inject as [Voice] content
+                if (mimeType.startsWith('audio/')) {
+                  const transcript = await transcribeAudio(hostPath);
+                  media.transcript = transcript || undefined;
+                  content = transcript
+                    ? `[Voice] ${transcript}`
+                    : '[Voice message — transcription unavailable]';
+                }
               } catch (err) {
                 logger.warn(
                   { err, id: msg.key.id },
