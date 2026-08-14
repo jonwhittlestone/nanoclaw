@@ -12,7 +12,9 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { runContainerAgent } = vi.hoisted(() => ({ runContainerAgent: vi.fn() }));
+const { runContainerAgent } = vi.hoisted(() => ({
+  runContainerAgent: vi.fn(),
+}));
 vi.mock('./container-runner.js', () => ({ runContainerAgent }));
 
 // Import after mocks are set up (vi.mock is hoisted — same pattern as
@@ -32,7 +34,8 @@ const validBody = {
 describe('parseAgentJson', () => {
   it('parses a bare JSON object', () => {
     // given
-    const raw = '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}';
+    const raw =
+      '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}';
 
     // when
     const result = parseAgentJson(raw);
@@ -109,6 +112,25 @@ describe('draftJournalEntry', () => {
   });
 });
 
+describe('GET /internal/journal/health', () => {
+  beforeEach(() => {
+    runContainerAgent.mockReset();
+  });
+
+  it('responds ok with no auth required', async () => {
+    // given
+    const app = createJournalDraftApp();
+
+    // when
+    const res = await request(app).get('/internal/journal/health');
+
+    // then
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'ok' });
+    expect(runContainerAgent).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /internal/journal/draft', () => {
   beforeEach(() => {
     runContainerAgent.mockReset();
@@ -123,7 +145,9 @@ describe('POST /internal/journal/draft', () => {
     const app = createJournalDraftApp();
 
     // when
-    const res = await request(app).post('/internal/journal/draft').send(validBody);
+    const res = await request(app)
+      .post('/internal/journal/draft')
+      .send(validBody);
 
     // then
     expect(res.status).toBe(401);
@@ -196,7 +220,8 @@ describe('POST /internal/journal/draft', () => {
           resolvers.push(() =>
             resolve({
               status: 'success',
-              result: '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}',
+              result:
+                '{"heading":"## 📌 etc.","insertionMarkdown":"- x","reply":"ok"}',
             }),
           );
         }),

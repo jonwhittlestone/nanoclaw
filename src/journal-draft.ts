@@ -134,6 +134,17 @@ export function createJournalDraftApp(): express.Express {
   // headroom without accepting arbitrarily large bodies.
   app.use(express.json({ limit: '256kb' }));
 
+  // Unauthenticated on purpose — a liveness probe, not a data endpoint. It
+  // reveals nothing beyond "this port is answering," which randoread's
+  // /api/journal/status already exposes indirectly (that's the whole point
+  // of the check — see main.md §05.05.02: the feature must go unavailable
+  // on the frontend when doylestone02 isn't reachable, e.g. off the
+  // tailnet). Reachability itself is already gated by JOURNAL_DRAFT_BIND_HOST
+  // defaulting to loopback, so this doesn't widen the trust boundary.
+  app.get('/internal/journal/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok' });
+  });
+
   app.post('/internal/journal/draft', async (req: Request, res: Response) => {
     if (!JOURNAL_DRAFT_API_KEY) {
       logger.error(
@@ -166,13 +177,19 @@ export function createJournalDraftApp(): express.Express {
         { activeRequests, max: JOURNAL_DRAFT_MAX_CONCURRENT },
         'journal draft request rejected — too many in flight',
       );
-      res.status(429).json({ error: 'too many journal draft requests in flight' });
+      res
+        .status(429)
+        .json({ error: 'too many journal draft requests in flight' });
       return;
     }
 
     activeRequests++;
     try {
-      const result = await draftJournalEntry({ dailyNoteRaw, userText, nowIso });
+      const result = await draftJournalEntry({
+        dailyNoteRaw,
+        userText,
+        nowIso,
+      });
       res.json(result);
     } catch (err) {
       logger.error({ err }, 'journal draft failed');
