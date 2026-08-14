@@ -19,6 +19,7 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
+import { startJournalDraftServer } from './journal-draft.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -766,6 +767,11 @@ async function main(): Promise<void> {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
   });
+  // Journal draft endpoint (src/journal-draft.ts) — independent of channels/
+  // queue/sessions above. A crash or misconfiguration here (e.g. missing
+  // JOURNAL_DRAFT_API_KEY) must not take down the real message loop, so it's
+  // started separately and only logs, never calls process.exit.
+  startJournalDraftServer();
 }
 
 // Guard: only run when executed directly, not when imported by tests
