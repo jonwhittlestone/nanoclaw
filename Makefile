@@ -13,7 +13,7 @@ IMAGE := $(shell pnpm exec tsx -e "$(call SLUG_JS,getDefaultContainerImage)" 2>/
 ONECLI_URL := $(shell grep -E '^ONECLI_URL=' .env 2>/dev/null | cut -d= -f2- || echo http://127.0.0.1:10254)
 DB ?= data/v2.db
 
-.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring fork-apply test-fork
+.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring fork-apply fork-wire test-fork
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -71,6 +71,9 @@ logs: ## Tail the host log
 
 fork-apply: ## Re-apply fork/config.json (MCP servers, packages) to the central DB
 	pnpm exec tsx scripts/fork-apply.ts fork/config.json
+
+fork-wire: ## Create fork agent groups + wiring (journal-draft) via ncl; host must be running
+	./scripts/fork-wire.sh
 
 status: ## ncl status
 	pnpm run ncl status
