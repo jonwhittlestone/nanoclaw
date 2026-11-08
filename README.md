@@ -1,3 +1,5 @@
+> **Fork:** this is jonwhittlestone's personal fork of NanoClaw v2. See [docs/FORK.md](docs/FORK.md) for what it adds, setup, testing and the Makefile targets.
+
 <p align="center">
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
