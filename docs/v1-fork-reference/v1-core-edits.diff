@@ -1,0 +1,587 @@
+diff --git a/.env.example b/.env.example
+index e69de29b..a583b5d9 100644
+--- a/.env.example
++++ b/.env.example
+@@ -0,0 +1,21 @@
++ASSISTANT_HAS_OWN_NUMBER=
++
++# Google Calendar MCP server — run /tmp/get-gcal-token.mjs once to populate these
++GCAL_CLIENT_ID=         # GCP → APIs & Services → Credentials → OAuth 2.0 Client ID
++GCAL_CLIENT_SECRET=     # Same GCP OAuth client
++GCAL_REFRESH_TOKEN=     # Output by get-gcal-token.mjs after browser auth
++GCAL_MCP_PORT=3020      # Port the MCP server listens on
++
++# Speech-to-text (voice note transcription via local whisper.cpp server)
++# See setup/whisper.service to install the systemd service
++WHISPER_SERVER_URL=http://127.0.0.1:8080
++
++# Journal draft endpoint — one-shot HTTP endpoint for randoread's floating
++# "Send to oh-two" journal input (src/journal-draft.ts). See main.md §05.05.02
++# "Security" before setting JOURNAL_DRAFT_BIND_HOST to anything but loopback —
++# randoread runs on a different host, so this must go over a private network
++# (Tailscale), never a public or plain-LAN interface.
++JOURNAL_DRAFT_PORT=3021
++JOURNAL_DRAFT_BIND_HOST=127.0.0.1       # set to this host's Tailscale IP (100.x.x.x) to allow randoread's host to reach it
++JOURNAL_DRAFT_API_KEY=                  # shared secret; generate with `openssl rand -hex 32`. Unset = endpoint refuses all requests.
++JOURNAL_DRAFT_MAX_CONCURRENT=2
+diff --git a/.gitignore b/.gitignore
+index e259fbf6..1d6a8d44 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -3,6 +3,7 @@ node_modules/
+ .npm-cache/
+ # Build output
+ dist/
++dist-tools/
+ 
+ # Local data & auth
+ store/
+@@ -13,15 +14,21 @@ logs/
+ groups/*
+ !groups/main/
+ !groups/global/
++!groups/journal-draft/
+ groups/main/*
+ groups/global/*
++groups/journal-draft/*
+ !groups/main/CLAUDE.md
+ !groups/global/CLAUDE.md
++!groups/journal-draft/CLAUDE.md
+ 
+ # Secrets
+ *.keys.json
+ .env
+ 
++# Python virtual environments (use UV_PROJECT_ENVIRONMENT to store outside Dropbox)
++.venv/
++
+ # Temp files
+ .tmp-*
+ 
+@@ -36,3 +43,5 @@ groups/global/*
+ .nanoclaw/
+ 
+ agents-sdk-docs
++__pycache__/
++repos-nanoclaw.code-workspace
+diff --git a/container/Dockerfile b/container/Dockerfile
+index e8537c3e..ad65faf6 100644
+--- a/container/Dockerfile
++++ b/container/Dockerfile
+@@ -26,6 +26,21 @@ RUN apt-get update && apt-get install -y \
+     git \
+     && rm -rf /var/lib/apt/lists/*
+ 
++# PDF conversion tools for the reMarkable skill
++RUN apt-get update && apt-get install -y \
++    pandoc \
++    texlive-xetex \
++    texlive-fonts-recommended \
++    texlive-latex-extra \
++    imagemagick \
++    && rm -rf /var/lib/apt/lists/*
++
++# Mermaid CLI — renders ```mermaid blocks to PNG before pandoc runs.
++# PUPPETEER_SKIP_CHROMIUM_DOWNLOAD avoids a duplicate 300MB Chromium download;
++# we point mmdc at the system Chromium already in the image instead.
++ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
++RUN npm install -g @mermaid-js/mermaid-cli
++
+ # Set Chromium path for agent-browser
+ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+@@ -36,6 +51,11 @@ RUN npm install -g agent-browser @anthropic-ai/claude-code
+ # Create app directory
+ WORKDIR /app
+ 
++# Puppeteer config for mermaid CLI — use the system Chromium already in the image.
++# Must be written after WORKDIR /app so /app exists.
++RUN echo '{"executablePath":"/usr/bin/chromium","args":["--no-sandbox","--disable-setuid-sandbox"]}' \
++    > /app/puppeteer.config.json
++
+ # Copy package files first for better caching
+ COPY agent-runner/package*.json ./
+ 
+diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
+index 7e739c7c..dc071857 100644
+--- a/container/agent-runner/src/index.ts
++++ b/container/agent-runner/src/index.ts
+@@ -469,6 +469,7 @@ async function runQuery(
+         'Skill',
+         'NotebookEdit',
+         'mcp__nanoclaw__*',
++        'mcp__google-calendar__*',
+       ],
+       env: sdkEnv,
+       permissionMode: 'bypassPermissions',
+@@ -484,6 +485,10 @@ async function runQuery(
+             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+           },
+         },
++        'google-calendar': {
++          type: 'http',
++          url: 'http://host.docker.internal:3020/mcp',
++        },
+       },
+       hooks: {
+         PreCompact: [
+diff --git a/package.json b/package.json
+index ce851882..65c828d0 100644
+--- a/package.json
++++ b/package.json
+@@ -22,18 +22,27 @@
+   },
+   "dependencies": {
+     "@onecli-sh/sdk": "^0.2.0",
++    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+     "better-sqlite3": "11.10.0",
+-    "cron-parser": "5.5.0"
++    "cron-parser": "5.5.0",
++    "qrcode": "^1.5.4",
++    "qrcode-terminal": "^0.12.0"
+   },
+   "devDependencies": {
+     "@eslint/js": "^9.35.0",
++    "@modelcontextprotocol/sdk": "^1.29.0",
+     "@types/better-sqlite3": "^7.6.12",
++    "@types/express": "^5.0.6",
+     "@types/node": "^22.10.0",
++    "@types/supertest": "^7.2.0",
+     "eslint": "^9.35.0",
+     "eslint-plugin-no-catch-all": "^1.1.0",
++    "express": "^5.2.1",
+     "globals": "^15.12.0",
++    "googleapis": "^171.4.0",
+     "husky": "^9.1.7",
+     "prettier": "^3.8.1",
++    "supertest": "^7.2.2",
+     "tsx": "^4.19.0",
+     "typescript": "^5.7.0",
+     "typescript-eslint": "^8.35.0",
+diff --git a/src/config.ts b/src/config.ts
+index a84cb618..ba8a4b18 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -11,6 +11,10 @@ const envConfig = readEnvFile([
+   'ONECLI_URL',
+   'ONECLI_API_KEY',
+   'TZ',
++  'JOURNAL_DRAFT_PORT',
++  'JOURNAL_DRAFT_API_KEY',
++  'JOURNAL_DRAFT_BIND_HOST',
++  'JOURNAL_DRAFT_MAX_CONCURRENT',
+ ]);
+ 
+ export const ASSISTANT_NAME =
+@@ -60,12 +64,51 @@ export const MAX_MESSAGES_PER_PROMPT = Math.max(
+   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
+ );
+ export const IPC_POLL_INTERVAL = 1000;
++export const WHISPER_SERVER_URL =
++  process.env.WHISPER_SERVER_URL ?? 'http://127.0.0.1:8080';
+ export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+ export const MAX_CONCURRENT_CONTAINERS = Math.max(
+   1,
+   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
+ );
+ 
++// Journal draft endpoint — see src/journal-draft.ts. A one-shot HTTP
++// endpoint used by randoread's floating "Send to oh-two" journal input.
++// Bypasses the channel/queue/session machinery entirely: it isn't a Channel,
++// isn't in registered_groups, and each call is a single, stateless agent turn.
++// See main.md §05.05.02 "Security" for the cross-host trust model — randoread
++// runs on a different host (doylestonex) from NanoClaw (doylestone02), so
++// this must be reached over a private network (Tailscale), never the public
++// internet or plain LAN.
++export const JOURNAL_DRAFT_PORT = parseInt(
++  process.env.JOURNAL_DRAFT_PORT || envConfig.JOURNAL_DRAFT_PORT || '3021',
++  10,
++);
++// Bind address — defaults to loopback-only so the endpoint is inert unless
++// explicitly opted into a routable interface. Set to the host's Tailscale
++// IP (100.x.x.x) in production, never '0.0.0.0'.
++export const JOURNAL_DRAFT_BIND_HOST =
++  process.env.JOURNAL_DRAFT_BIND_HOST ||
++  envConfig.JOURNAL_DRAFT_BIND_HOST ||
++  '127.0.0.1';
++// Shared secret the caller (randoread's Go backend) sends as
++// `Authorization: Bearer <key>`. Not set = endpoint refuses all requests.
++export const JOURNAL_DRAFT_API_KEY =
++  process.env.JOURNAL_DRAFT_API_KEY || envConfig.JOURNAL_DRAFT_API_KEY;
++// Each call spawns a Docker container — separate from and much lower than
++// MAX_CONCURRENT_CONTAINERS (shared with real channel traffic), since this
++// is a single-user "type one note, wait for one reply" UI with no queue
++// backing it. Requests beyond this get a 429, not queued.
++export const JOURNAL_DRAFT_MAX_CONCURRENT = Math.max(
++  1,
++  parseInt(
++    process.env.JOURNAL_DRAFT_MAX_CONCURRENT ||
++      envConfig.JOURNAL_DRAFT_MAX_CONCURRENT ||
++      '2',
++    10,
++  ) || 2,
++);
++
+ function escapeRegex(str: string): string {
+   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+ }
+diff --git a/src/container-runner.ts b/src/container-runner.ts
+index 1e1e3db2..00647ca6 100644
+--- a/src/container-runner.ts
++++ b/src/container-runner.ts
+@@ -268,6 +268,15 @@ async function buildContainerArgs(
+     );
+   }
+ 
++  // Bypass the OneCLI proxy for requests to the host machine (e.g. gcal-mcp on port 3020).
++  // Without this, HTTP_PROXY routes MCP calls through the OneCLI gateway which blocks them.
++  args.push(
++    '-e',
++    'NO_PROXY=host.docker.internal',
++    '-e',
++    'no_proxy=host.docker.internal',
++  );
++
+   // Runtime-specific args for host gateway resolution
+   args.push(...hostGatewayArgs());
+ 
+diff --git a/src/db.ts b/src/db.ts
+index 591f2a8f..fd5c5260 100644
+--- a/src/db.ts
++++ b/src/db.ts
+@@ -157,6 +157,15 @@ function createSchema(database: Database.Database): void {
+   } catch {
+     /* columns already exist */
+   }
++
++  // Add media columns if they don't exist (migration for existing DBs)
++  try {
++    database.exec(`ALTER TABLE messages ADD COLUMN media_path TEXT`);
++    database.exec(`ALTER TABLE messages ADD COLUMN media_mime_type TEXT`);
++    database.exec(`ALTER TABLE messages ADD COLUMN media_file_name TEXT`);
++  } catch {
++    /* columns already exist */
++  }
+ }
+ 
+ export function initDatabase(): void {
+@@ -285,7 +294,7 @@ export function setLastGroupSync(): void {
+  */
+ export function storeMessage(msg: NewMessage): void {
+   db.prepare(
+-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name, media_path, media_mime_type, media_file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+   ).run(
+     msg.id,
+     msg.chat_jid,
+@@ -298,6 +307,9 @@ export function storeMessage(msg: NewMessage): void {
+     msg.reply_to_message_id ?? null,
+     msg.reply_to_message_content ?? null,
+     msg.reply_to_sender_name ?? null,
++    msg.media?.path ?? null,
++    msg.media?.mimeType ?? null,
++    msg.media?.fileName ?? null,
+   );
+ }
+ 
+@@ -343,26 +355,45 @@ export function getNewMessages(
+   const sql = `
+     SELECT * FROM (
+       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+-             reply_to_message_id, reply_to_message_content, reply_to_sender_name
++             reply_to_message_id, reply_to_message_content, reply_to_sender_name,
++             media_path, media_mime_type, media_file_name
+       FROM messages
+       WHERE timestamp > ? AND chat_jid IN (${placeholders})
+         AND is_bot_message = 0 AND content NOT LIKE ?
+-        AND content != '' AND content IS NOT NULL
++        AND (content != '' AND content IS NOT NULL OR media_path IS NOT NULL)
+       ORDER BY timestamp DESC
+       LIMIT ?
+     ) ORDER BY timestamp
+   `;
+ 
++  type MsgRow = NewMessage & {
++    media_path?: string | null;
++    media_mime_type?: string | null;
++    media_file_name?: string | null;
++  };
+   const rows = db
+     .prepare(sql)
+-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
++    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as MsgRow[];
++
++  const messages: NewMessage[] = rows.map((row) => {
++    const { media_path, media_mime_type, media_file_name, ...rest } = row;
++    const msg: NewMessage = rest;
++    if (media_path && media_mime_type) {
++      msg.media = {
++        path: media_path,
++        mimeType: media_mime_type,
++        fileName: media_file_name ?? undefined,
++      };
++    }
++    return msg;
++  });
+ 
+   let newTimestamp = lastTimestamp;
+-  for (const row of rows) {
+-    if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
++  for (const msg of messages) {
++    if (msg.timestamp > newTimestamp) newTimestamp = msg.timestamp;
+   }
+ 
+-  return { messages: rows, newTimestamp };
++  return { messages, newTimestamp };
+ }
+ 
+ export function getMessagesSince(
+@@ -377,18 +408,37 @@ export function getMessagesSince(
+   const sql = `
+     SELECT * FROM (
+       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+-             reply_to_message_id, reply_to_message_content, reply_to_sender_name
++             reply_to_message_id, reply_to_message_content, reply_to_sender_name,
++             media_path, media_mime_type, media_file_name
+       FROM messages
+       WHERE chat_jid = ? AND timestamp > ?
+         AND is_bot_message = 0 AND content NOT LIKE ?
+-        AND content != '' AND content IS NOT NULL
++        AND (content != '' AND content IS NOT NULL OR media_path IS NOT NULL)
+       ORDER BY timestamp DESC
+       LIMIT ?
+     ) ORDER BY timestamp
+   `;
+-  return db
++  type MsgRow = NewMessage & {
++    media_path?: string | null;
++    media_mime_type?: string | null;
++    media_file_name?: string | null;
++  };
++  const rows = db
+     .prepare(sql)
+-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
++    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as MsgRow[];
++
++  return rows.map((row) => {
++    const { media_path, media_mime_type, media_file_name, ...rest } = row;
++    const msg: NewMessage = rest;
++    if (media_path && media_mime_type) {
++      msg.media = {
++        path: media_path,
++        mimeType: media_mime_type,
++        fileName: media_file_name ?? undefined,
++      };
++    }
++    return msg;
++  });
+ }
+ 
+ export function getLastBotMessageTimestamp(
+@@ -404,6 +454,16 @@ export function getLastBotMessageTimestamp(
+   return row?.ts ?? undefined;
+ }
+ 
++export function getMessageContentById(
++  id: string,
++  chatJid: string,
++): string | undefined {
++  const row = db
++    .prepare(`SELECT content FROM messages WHERE id = ? AND chat_jid = ?`)
++    .get(id, chatJid) as { content: string } | undefined;
++  return row?.content;
++}
++
+ export function createTask(
+   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+ ): void {
+diff --git a/src/index.ts b/src/index.ts
+index 004764d6..21717e24 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -19,6 +19,7 @@ import {
+   getChannelFactory,
+   getRegisteredChannelNames,
+ } from './channels/registry.js';
++import { startJournalDraftServer } from './journal-draft.js';
+ import {
+   ContainerOutput,
+   runContainerAgent,
+@@ -718,6 +719,18 @@ async function main(): Promise<void> {
+       if (!channel) throw new Error(`No channel for JID: ${jid}`);
+       return channel.sendMessage(jid, text);
+     },
++    sendFile: async (jid, filePath, mimeType, caption) => {
++      const channel = findChannel(channels, jid);
++      if (!channel) {
++        logger.warn({ jid }, 'No channel owns JID, cannot send file');
++        return;
++      }
++      if (channel.sendFile) {
++        await channel.sendFile(jid, filePath, mimeType, caption);
++      } else {
++        logger.warn({ jid }, 'Channel does not support sendFile');
++      }
++    },
+     registeredGroups: () => registeredGroups,
+     registerGroup,
+     syncGroups: async (force: boolean) => {
+@@ -754,6 +767,12 @@ async function main(): Promise<void> {
+     logger.fatal({ err }, 'Message loop crashed unexpectedly');
+     process.exit(1);
+   });
++  // Journal draft endpoint (src/journal-draft.ts) — independent of channels/
++  // queue/sessions above. A crash or misconfiguration here (e.g. missing
++  // JOURNAL_DRAFT_API_KEY, or the Tailscale bind address being absent) must
++  // not take down the real message loop, so it's started separately under a
++  // supervisor that only logs and retries, never calls process.exit.
++  startJournalDraftServer();
+ }
+ 
+ // Guard: only run when executed directly, not when imported by tests
+diff --git a/src/ipc.ts b/src/ipc.ts
+index e1716711..99d0d281 100644
+--- a/src/ipc.ts
++++ b/src/ipc.ts
+@@ -3,7 +3,7 @@ import path from 'path';
+ 
+ import { CronExpressionParser } from 'cron-parser';
+ 
+-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
++import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+ import { AvailableGroup } from './container-runner.js';
+ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+ import { isValidGroupFolder } from './group-folder.js';
+@@ -12,6 +12,12 @@ import { RegisteredGroup } from './types.js';
+ 
+ export interface IpcDeps {
+   sendMessage: (jid: string, text: string) => Promise<void>;
++  sendFile?: (
++    jid: string,
++    filePath: string,
++    mimeType: string,
++    caption?: string,
++  ) => Promise<void>;
+   registeredGroups: () => Record<string, RegisteredGroup>;
+   registerGroup: (jid: string, group: RegisteredGroup) => void;
+   syncGroups: (force: boolean) => Promise<void>;
+@@ -25,6 +31,19 @@ export interface IpcDeps {
+   onTasksChanged: () => void;
+ }
+ 
++function resolveContainerPath(
++  containerPath: string,
++  groupFolder: string,
++): string {
++  const prefix = '/workspace/group/';
++  if (!containerPath.startsWith(prefix)) {
++    throw new Error(
++      `IPC file path must be under /workspace/group/: ${containerPath}`,
++    );
++  }
++  return path.join(GROUPS_DIR, groupFolder, containerPath.slice(prefix.length));
++}
++
+ let ipcWatcherRunning = false;
+ 
+ export function startIpcWatcher(deps: IpcDeps): void {
+@@ -92,6 +111,48 @@ export function startIpcWatcher(deps: IpcDeps): void {
+                     'Unauthorized IPC message attempt blocked',
+                   );
+                 }
++              } else if (
++                data.type === 'file' &&
++                data.chatJid &&
++                data.filePath &&
++                data.mimeType
++              ) {
++                const targetGroup = registeredGroups[data.chatJid];
++                if (
++                  isMain ||
++                  (targetGroup && targetGroup.folder === sourceGroup)
++                ) {
++                  if (deps.sendFile) {
++                    const hostPath = resolveContainerPath(
++                      data.filePath,
++                      sourceGroup,
++                    );
++                    await deps.sendFile(
++                      data.chatJid,
++                      hostPath,
++                      data.mimeType,
++                      data.caption,
++                    );
++                    logger.info(
++                      {
++                        chatJid: data.chatJid,
++                        filePath: data.filePath,
++                        sourceGroup,
++                      },
++                      'IPC file sent',
++                    );
++                  } else {
++                    logger.warn(
++                      { sourceGroup },
++                      'sendFile not available on current channel — file IPC ignored',
++                    );
++                  }
++                } else {
++                  logger.warn(
++                    { chatJid: data.chatJid, sourceGroup },
++                    'Unauthorized IPC file attempt blocked',
++                  );
++                }
+               }
+               fs.unlinkSync(filePath);
+             } catch (err) {
+diff --git a/src/router.ts b/src/router.ts
+index d6f88ad1..7ab60174 100644
+--- a/src/router.ts
++++ b/src/router.ts
+@@ -19,11 +19,14 @@ export function formatMessages(
+     const replyAttr = m.reply_to_message_id
+       ? ` reply_to="${escapeXml(m.reply_to_message_id)}"`
+       : '';
++    const mediaAttr = m.media
++      ? ` media_path="${escapeXml(m.media.path)}" media_type="${escapeXml(m.media.mimeType)}"${m.media.fileName ? ` media_file_name="${escapeXml(m.media.fileName)}"` : ''}`
++      : '';
+     const replySnippet =
+       m.reply_to_message_content && m.reply_to_sender_name
+         ? `\n  <quoted_message from="${escapeXml(m.reply_to_sender_name)}">${escapeXml(m.reply_to_message_content)}</quoted_message>`
+         : '';
+-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${replyAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
++    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${replyAttr}${mediaAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
+   });
+ 
+   const header = `<context timezone="${escapeXml(timezone)}" />\n`;
+diff --git a/src/types.ts b/src/types.ts
+index 717aff62..e6f15724 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -55,6 +55,12 @@ export interface NewMessage {
+   reply_to_message_id?: string;
+   reply_to_message_content?: string;
+   reply_to_sender_name?: string;
++  media?: {
++    path: string;
++    mimeType: string;
++    fileName?: string;
++    transcript?: string;
++  };
+ }
+ 
+ export interface ScheduledTask {
+@@ -95,6 +101,13 @@ export interface Channel {
+   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+   // Optional: sync group/chat names from the platform.
+   syncGroups?(force: boolean): Promise<void>;
++  // Optional: send a file. Channels that support it implement it.
++  sendFile?(
++    jid: string,
++    filePath: string,
++    mimeType: string,
++    caption?: string,
++  ): Promise<void>;
+ }
+ 
+ // Callback type that channels use to deliver inbound messages

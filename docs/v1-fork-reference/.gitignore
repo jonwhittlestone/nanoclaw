@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.npm-cache/
+# Build output
+dist/
+dist-tools/
+
+# Local data & auth
+store/
+data/
+logs/
+
+# Groups - only track base structure and specific CLAUDE.md files
+groups/*
+!groups/main/
+!groups/global/
+!groups/journal-draft/
+groups/main/*
+groups/global/*
+groups/journal-draft/*
+!groups/main/CLAUDE.md
+!groups/global/CLAUDE.md
+!groups/journal-draft/CLAUDE.md
+
+# Secrets
+*.keys.json
+.env
+
+# Python virtual environments (use UV_PROJECT_ENVIRONMENT to store outside Dropbox)
+.venv/
+
+# Temp files
+.tmp-*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Skills system (local per-installation state)
+.nanoclaw/
+
+agents-sdk-docs
+__pycache__/
+repos-nanoclaw.code-workspace
