@@ -24,6 +24,7 @@ import {
 } from './config.js';
 import { runContainerAgent } from './container-runner.js';
 import { stopContainer } from './container-runtime.js';
+import { superviseServer, Supervisor } from './journal-draft-supervisor.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -240,12 +241,13 @@ export function createJournalDraftApp(): express.Express {
   return app;
 }
 
-export function startJournalDraftServer(): void {
-  const app = createJournalDraftApp();
-  app.listen(JOURNAL_DRAFT_PORT, JOURNAL_DRAFT_BIND_HOST, () => {
-    logger.info(
-      { port: JOURNAL_DRAFT_PORT, host: JOURNAL_DRAFT_BIND_HOST },
-      'Journal draft server listening',
-    );
+// Supervised rather than a bare app.listen(): the bind host is normally the
+// Tailscale IP, which can be missing at boot or vanish when tailscaled
+// restarts. See journal-draft-supervisor.ts and main.md §05.06.
+export function startJournalDraftServer(): Supervisor {
+  return superviseServer({
+    app: createJournalDraftApp(),
+    host: JOURNAL_DRAFT_BIND_HOST,
+    port: JOURNAL_DRAFT_PORT,
   });
 }

@@ -769,8 +769,9 @@ async function main(): Promise<void> {
   });
   // Journal draft endpoint (src/journal-draft.ts) — independent of channels/
   // queue/sessions above. A crash or misconfiguration here (e.g. missing
-  // JOURNAL_DRAFT_API_KEY) must not take down the real message loop, so it's
-  // started separately and only logs, never calls process.exit.
+  // JOURNAL_DRAFT_API_KEY, or the Tailscale bind address being absent) must
+  // not take down the real message loop, so it's started separately under a
+  // supervisor that only logs and retries, never calls process.exit.
   startJournalDraftServer();
 }
 
