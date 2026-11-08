@@ -19,7 +19,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { CENTRAL_DB_PATH } from '../src/config.js';
-import { parseMcpServerConfig, validateMcpServerName, type McpServerConfig } from '../src/container-config.js';
+import { backfillContainerConfigs } from '../src/backfill-container-configs.js';
+import {
+  parseMcpServerConfig,
+  validateMcpServerName,
+  type AdditionalMountConfig,
+  type McpServerConfig,
+} from '../src/container-config.js';
 import { getAgentGroupByFolder } from '../src/db/agent-groups.js';
 import { closeDb, initDb } from '../src/db/connection.js';
 import { ensureContainerConfig, getContainerConfig, updateContainerConfigJson } from '../src/db/container-configs.js';
@@ -28,6 +34,7 @@ import { runMigrations } from '../src/db/migrations/index.js';
 export interface ForkGroupConfig {
   mcpServers?: Record<string, Record<string, unknown>>;
   packages?: { apt?: string[]; npm?: string[] };
+  additionalMounts?: AdditionalMountConfig[];
 }
 
 export interface ForkConfig {
@@ -37,13 +44,19 @@ export interface ForkConfig {
 export type ForkApplyReport =
   | { folder: string; action: 'missing-group' }
   | { folder: string; action: 'mcp-set'; name: string }
-  | { folder: string; action: 'packages'; apt: string[]; npm: string[] };
+  | { folder: string; action: 'packages'; apt: string[]; npm: string[] }
+  | { folder: string; action: 'mounts'; containerPaths: string[] };
+
+export interface ForkApplyDeps {
+  /** Seeds rows from legacy groups/<folder>/container.json; must run before any row is created. */
+  backfill?: () => Promise<void>;
+}
 
 function union(existing: string[], add: string[] = []): string[] {
   return [...existing, ...add.filter((p) => !existing.includes(p))];
 }
 
-export async function applyForkConfig(spec: ForkConfig): Promise<ForkApplyReport[]> {
+export async function applyForkConfig(spec: ForkConfig, deps: ForkApplyDeps = {}): Promise<ForkApplyReport[]> {
   // Validate everything before writing anything, so a bad entry can't leave
   // half the spec applied.
   const parsed = Object.entries(spec.groups).map(([folder, cfg]) => {
@@ -52,11 +65,16 @@ export async function applyForkConfig(spec: ForkConfig): Promise<ForkApplyReport
       validateMcpServerName(name);
       servers[name] = parseMcpServerConfig(raw);
     }
-    return { folder, servers, packages: cfg.packages };
+    return { folder, servers, packages: cfg.packages, mounts: cfg.additionalMounts };
   });
 
+  // A freshly migrated install only has groups/<folder>/container.json (with the
+  // vault mount). Upstream's backfill imports it only for groups with no row, so
+  // it must run before ensureContainerConfig creates an empty one.
+  await (deps.backfill ?? backfillContainerConfigs)();
+
   const report: ForkApplyReport[] = [];
-  for (const { folder, servers, packages } of parsed) {
+  for (const { folder, servers, packages, mounts } of parsed) {
     const group = await getAgentGroupByFolder(folder);
     if (!group) {
       report.push({ folder, action: 'missing-group' });
@@ -77,6 +95,14 @@ export async function applyForkConfig(spec: ForkConfig): Promise<ForkApplyReport
       await updateContainerConfigJson(group.id, 'packages_apt', apt);
       await updateContainerConfigJson(group.id, 'packages_npm', npm);
       report.push({ folder, action: 'packages', apt, npm });
+    }
+
+    if (mounts && mounts.length > 0) {
+      const declared = new Set(mounts.map((m) => m.containerPath));
+      const current = JSON.parse(row.additional_mounts) as AdditionalMountConfig[];
+      const kept = current.filter((m) => !declared.has(m.containerPath));
+      await updateContainerConfigJson(group.id, 'additional_mounts', [...kept, ...mounts]);
+      report.push({ folder, action: 'mounts', containerPaths: [...declared] });
     }
   }
   return report;

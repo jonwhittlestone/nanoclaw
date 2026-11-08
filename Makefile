@@ -13,7 +13,7 @@ IMAGE := $(shell pnpm exec tsx -e "$(call SLUG_JS,getDefaultContainerImage)" 2>/
 ONECLI_URL := $(shell grep -E '^ONECLI_URL=' .env 2>/dev/null | cut -d= -f2- || echo http://127.0.0.1:10254)
 DB ?= data/v2.db
 
-.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring fork-apply
+.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring fork-apply test-fork
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -45,7 +45,10 @@ test-host: ## Host tests (vitest)
 test-container: ## Container agent-runner tests (bun)
 	cd container/agent-runner && bun run test
 
-test: test-host ## Run host tests (add test-container when bun is available)
+test-fork: ## Fork's Python tests (reMarkable converter)
+	cd fork && uv run pytest -q
+
+test: test-host test-fork ## Host + fork tests (add test-container when bun is available)
 
 check: ## What CI runs: format, typecheck host + container, tests
 	pnpm run format:check

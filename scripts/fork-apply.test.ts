@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { closeDb, initTestDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
@@ -14,6 +14,8 @@ import { ensureContainerConfig, getContainerConfig, updateContainerConfigJson } 
 import { applyForkConfig, type ForkConfig } from './fork-apply.js';
 
 const GCAL = { type: 'http', url: 'http://host.docker.internal:3020/mcp' } as const;
+// Hermetic: the real backfill reads groups/<folder>/container.json from the cwd.
+const noBackfill = { backfill: async () => {} };
 
 async function group(id: string, folder: string): Promise<void> {
   await createAgentGroup({ id, name: folder, folder, agent_provider: null, created_at: new Date().toISOString() });
@@ -31,7 +33,7 @@ describe('applyForkConfig', () => {
     await group('ag-1', 'whatsapp_main');
     const spec: ForkConfig = { groups: { whatsapp_main: { mcpServers: { 'google-calendar': GCAL } } } };
 
-    const report = await applyForkConfig(spec);
+    const report = await applyForkConfig(spec, noBackfill);
 
     const row = await getContainerConfig('ag-1');
     expect(JSON.parse(row!.mcp_servers)).toEqual({ 'google-calendar': GCAL });
@@ -44,8 +46,8 @@ describe('applyForkConfig', () => {
     await updateContainerConfigJson('ag-1', 'mcp_servers', { mine: { type: 'http', url: 'https://example.com/mcp' } });
     const spec: ForkConfig = { groups: { whatsapp_main: { mcpServers: { 'google-calendar': GCAL } } } };
 
-    await applyForkConfig(spec);
-    await applyForkConfig(spec);
+    await applyForkConfig(spec, noBackfill);
+    await applyForkConfig(spec, noBackfill);
 
     const servers = JSON.parse((await getContainerConfig('ag-1'))!.mcp_servers);
     expect(Object.keys(servers).sort()).toEqual(['google-calendar', 'mine']);
@@ -57,8 +59,8 @@ describe('applyForkConfig', () => {
     await updateContainerConfigJson('ag-1', 'packages_apt', ['jq']);
     const spec: ForkConfig = { groups: { whatsapp_main: { packages: { apt: ['jq', 'pandoc'], npm: ['x'] } } } };
 
-    await applyForkConfig(spec);
-    await applyForkConfig(spec);
+    await applyForkConfig(spec, noBackfill);
+    await applyForkConfig(spec, noBackfill);
 
     const row = (await getContainerConfig('ag-1'))!;
     expect(JSON.parse(row.packages_apt)).toEqual(['jq', 'pandoc']);
@@ -71,7 +73,7 @@ describe('applyForkConfig', () => {
       groups: { nope: { mcpServers: { a: GCAL } }, whatsapp_main: { mcpServers: { 'google-calendar': GCAL } } },
     };
 
-    const report = await applyForkConfig(spec);
+    const report = await applyForkConfig(spec, noBackfill);
 
     expect(report).toContainEqual({ folder: 'nope', action: 'missing-group' });
     expect(JSON.parse((await getContainerConfig('ag-1'))!.mcp_servers)).toHaveProperty('google-calendar');
@@ -83,7 +85,7 @@ describe('applyForkConfig', () => {
       groups: { whatsapp_main: { mcpServers: { bad: { type: 'http', url: 'http://evil.example/mcp' } } } },
     };
 
-    await expect(applyForkConfig(spec as ForkConfig)).rejects.toThrow(/HTTPS/);
+    await expect(applyForkConfig(spec as ForkConfig, noBackfill)).rejects.toThrow(/HTTPS/);
   });
 
   it('ships a fork/config.json that declares google-calendar for the self-chat group', () => {
@@ -91,5 +93,34 @@ describe('applyForkConfig', () => {
       fs.readFileSync(path.join(import.meta.dirname, '..', 'fork', 'config.json'), 'utf8'),
     ) as ForkConfig;
     expect(spec.groups.whatsapp_main.mcpServers?.['google-calendar']).toMatchObject(GCAL);
+  });
+  it('runs the legacy container.json backfill before creating any config row', async () => {
+    // Regression: creating the row first pre-empted backfillContainerConfigs,
+    // silently dropping the migrated vault mount.
+    await group('ag-1', 'whatsapp_main');
+    const calls: string[] = [];
+    const backfill = vi.fn(async () => {
+      calls.push(`backfill:${(await getContainerConfig('ag-1')) ? 'row' : 'no-row'}`);
+    });
+
+    await applyForkConfig({ groups: { whatsapp_main: { mcpServers: { 'google-calendar': GCAL } } } }, { backfill });
+
+    expect(calls).toEqual(['backfill:no-row']);
+  });
+
+  it('sets declared additional mounts, keyed by containerPath', async () => {
+    await group('ag-1', 'whatsapp_main');
+    await ensureContainerConfig('ag-1');
+    await updateContainerConfigJson('ag-1', 'additional_mounts', [
+      { hostPath: '/srv/other', containerPath: 'other', readonly: true },
+      { hostPath: '/old/vault', containerPath: 'obsidian', readonly: true },
+    ]);
+    const vault = { hostPath: '/home/jon/vault', containerPath: 'obsidian', readonly: false };
+
+    await applyForkConfig({ groups: { whatsapp_main: { additionalMounts: [vault] } } }, noBackfill);
+    await applyForkConfig({ groups: { whatsapp_main: { additionalMounts: [vault] } } }, noBackfill);
+
+    const mounts = JSON.parse((await getContainerConfig('ag-1'))!.additional_mounts);
+    expect(mounts).toEqual([{ hostPath: '/srv/other', containerPath: 'other', readonly: true }, vault]);
   });
 });
