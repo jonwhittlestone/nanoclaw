@@ -1,6 +1,13 @@
 {
   "groups": {
     "whatsapp_main": {
+      "additionalMounts": [
+        {
+          "hostPath": "/home/jon/Dropbox/DropsyncFiles/jw-mind",
+          "containerPath": "obsidian",
+          "readonly": false
+        }
+      ],
       "mcpServers": {
         "google-calendar": {
           "type": "http",
