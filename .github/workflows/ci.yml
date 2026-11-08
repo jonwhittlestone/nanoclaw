@@ -58,6 +58,7 @@ jobs:
       - working-directory: fork
         run: python -m pytest -q
 
+  iron-front:
     runs-on: ubuntu-latest
     permissions:
       contents: read
