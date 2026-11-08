@@ -11,15 +11,22 @@
  * dead until a manual restart.
  *
  * The supervisor runs one idempotent tick at start and every `intervalMs`:
- * if the server isn't listening, (re)bind it. Bind errors are logged, never
- * thrown, so the WhatsApp message loop is never taken down by this.
+ * if the server isn't listening — or claims to be but doesn't answer its own
+ * health route on the bound address — close it and bind a fresh one. The
+ * HTTP probe matters: on 2026-11-08 the socket vanished with no 'error'
+ * event, so only an outside request (the same one randoread makes) notices.
+ * Bind errors are logged, never thrown, so the WhatsApp message loop is
+ * never taken down by this.
  */
 import http from 'node:http';
+import net from 'node:net';
 import type express from 'express';
 
 import { logger } from './logger.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
+const PROBE_TIMEOUT_MS = 2_000;
+export const HEALTH_PATH = '/internal/journal/health';
 
 export interface SuperviseOptions {
   app: express.Express;
@@ -35,6 +42,25 @@ export interface Supervisor {
   stop(): Promise<void>;
 }
 
+async function httpProbe(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch {
+    // Deliberately catch-all: refused, reset, timeout, no route — every
+    // failure means "not reachable", and a probe must never throw.
+    return false;
+  }
+}
+
+function healthUrl(host: string, server: http.Server): string {
+  const { port } = server.address() as net.AddressInfo;
+  const h = net.isIPv6(host) ? `[${host}]` : host;
+  return `http://${h}:${port}${HEALTH_PATH}`;
+}
+
 function closeQuietly(server: http.Server | undefined): Promise<void> {
   if (!server?.listening) return Promise.resolve();
   return new Promise((resolve) => server.close(() => resolve()));
@@ -42,6 +68,7 @@ function closeQuietly(server: http.Server | undefined): Promise<void> {
 
 export function superviseServer(opts: SuperviseOptions): Supervisor {
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const probe = opts.probe ?? httpProbe;
   let server: http.Server | undefined;
   let state: 'up' | 'down' | undefined;
   let running = false;
@@ -49,10 +76,13 @@ export function superviseServer(opts: SuperviseOptions): Supervisor {
 
   function markUp(): void {
     if (state === 'up') return;
+    const recovered = state === 'down';
     state = 'up';
     logger.info(
       { host: opts.host, port: opts.port },
-      'Journal draft server listening',
+      recovered
+        ? 'Journal draft server re-bound'
+        : 'Journal draft server listening',
     );
   }
 
@@ -86,7 +116,10 @@ export function superviseServer(opts: SuperviseOptions): Supervisor {
     if (running || stopped) return;
     running = true;
     try {
-      if (server?.listening) return;
+      if (server?.listening) {
+        if (await probe(healthUrl(opts.host, server))) return;
+        markDown(new Error('health probe of bound address failed'));
+      }
       await closeQuietly(server);
       if (!stopped) await bind();
     } finally {
