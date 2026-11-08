@@ -21,13 +21,22 @@ async function ensureWav(filePath: string): Promise<string> {
   const wavPath = filePath.replace(/\.[^.]+$/, '.wav');
   try {
     await execFileAsync('ffmpeg', [
-      '-i', filePath,
-      '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le',
-      wavPath, '-y',
+      '-i',
+      filePath,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
+      wavPath,
+      '-y',
     ]);
     return wavPath;
   } catch (err) {
-    logger.warn(`transcribeAudio: ffmpeg conversion failed, sending original — ${err}`);
+    logger.warn(
+      `transcribeAudio: ffmpeg conversion failed, sending original — ${err}`,
+    );
     return filePath;
   }
 }
@@ -50,7 +59,9 @@ async function postToWhisper(filePath: string): Promise<string> {
   }
 
   if (!response.ok) {
-    logger.error(`transcribeAudio: server error ${response.status}: ${await response.text()}`);
+    logger.error(
+      `transcribeAudio: server error ${response.status}: ${await response.text()}`,
+    );
     return '';
   }
 
