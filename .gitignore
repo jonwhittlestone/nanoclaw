@@ -61,3 +61,6 @@ forks.md
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Fork: fork-owned group instructions are source, not runtime state
+!fork/groups/
