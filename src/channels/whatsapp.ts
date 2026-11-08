@@ -39,6 +39,7 @@ import {
 import type { GroupMetadata, WAMessageKey, WAMessage, WASocket } from '@whiskeysockets/baileys';
 
 import { isSafeAttachmentName } from '../attachment-safety.js';
+import { transcribeAudio } from '../transcription.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { registerChannelAdapter } from './channel-registry.js';
@@ -362,6 +363,12 @@ export function toInboundAttachment(
     size: buffer.length,
     data: buffer.toString('base64'),
   };
+}
+
+/** Fork: present a transcribed voice note to the agent the way v1 did. */
+export function voiceNoteContent(existing: string, transcript: string): string {
+  const voice = transcript ? `[Voice] ${transcript}` : '[Voice message — transcription unavailable]';
+  return existing ? `${existing}\n${voice}` : voice;
 }
 
 function buildMediaMessage(data: Buffer, filename: string, ext: string, caption?: string): any {
@@ -883,6 +890,14 @@ registerChannelAdapter('whatsapp', {
             // sent even when it couldn't be fetched — instead of silently
             // dropping the attachment (or the whole message, if uncaptioned).
             content = appendMediaFailureNote(content, failures);
+
+            // Fork: transcribe voice notes locally (whisper.service) so the
+            // agent receives text; the audio itself is still attached.
+            for (const att of attachments) {
+              if (att.type !== 'audio') continue;
+              const transcript = await transcribeAudio(Buffer.from(att.data, 'base64'), att.name);
+              content = voiceNoteContent(content, transcript);
+            }
 
             // Skip empty protocol messages (no text and no attachments)
             if (!content && attachments.length === 0) continue;
