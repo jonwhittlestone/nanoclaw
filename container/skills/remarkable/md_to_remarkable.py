@@ -6,7 +6,7 @@ Dropbox syncs it automatically; open via the reMarkable Dropbox connector.
 Runs inside the nanoclaw-agent container — invoked by oh-two via the Bash tool.
 
 Usage:
-    python3 /workspace/project/scripts/md_to_remarkable.py <path> [--dry-run]
+    python3 /home/node/.claude/skills/remarkable/md_to_remarkable.py <path> [--dry-run]
 
 <path> can be:
     - Vault-relative path:  trips/25-france-summer.md
@@ -17,6 +17,8 @@ Requires: pandoc, xelatex (texlive-xetex), mmdc (@mermaid-js/mermaid-cli), image
 """
 
 import argparse
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -27,12 +29,32 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-VAULT_MOUNT = Path('/workspace/extra/jw-mind')
+# v2 mounts each additionalMount at /workspace/extra/<containerPath>; the
+# vault's containerPath is "obsidian". REMARKABLE_VAULT overrides (dev/tests).
+DEFAULT_VAULT_MOUNT = Path('/workspace/extra/obsidian')
 
-# mmdc puppeteer config — points to system Chromium inside the container.
-# Falls back to mmdc's bundled Chromium if the config file is absent
-# (e.g. when running on the host during development).
+
+def vault_mount() -> Path:
+    return Path(os.environ.get('REMARKABLE_VAULT') or DEFAULT_VAULT_MOUNT)
+
+
+# v1's image baked a puppeteer config at this path; v2's doesn't, so when it's
+# absent we write one pointing mmdc at the image's system Chromium.
 PUPPETEER_CONFIG = Path('/app/puppeteer.config.json')
+
+
+def puppeteer_config(tmp_dir: Path) -> Path | None:
+    if PUPPETEER_CONFIG.exists():
+        return PUPPETEER_CONFIG
+    chromium = shutil.which('chromium')
+    if not chromium:
+        return None  # let mmdc use its own browser (host-side development)
+    cfg = tmp_dir / 'puppeteer.config.json'
+    cfg.write_text(json.dumps({
+        'executablePath': chromium,
+        'args': ['--no-sandbox', '--disable-setuid-sandbox'],
+    }))
+    return cfg
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'}
 
@@ -69,8 +91,9 @@ def render_mermaid_blocks(text: str, tmp_dir: Path) -> str:
             '--backgroundColor', 'white',
             '--width', '1200',      # ~A5 at 226 DPI — good RM2 resolution
         ]
-        if PUPPETEER_CONFIG.exists():
-            cmd += ['--puppeteerConfigFile', str(PUPPETEER_CONFIG)]
+        cfg = puppeteer_config(tmp_dir)
+        if cfg:
+            cmd += ['--puppeteerConfigFile', str(cfg)]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0 or not png_file.exists():
@@ -109,7 +132,7 @@ def resolve_embedded_images(text: str, note_path: Path) -> str:
         if candidate.exists():
             return f'![]({candidate})'
 
-        matches = list(VAULT_MOUNT.rglob(ref))
+        matches = list(vault_mount().rglob(ref))
         if matches:
             return f'![]({matches[0]})'
 
@@ -145,9 +168,9 @@ def download_web_images(text: str, tmp_dir: Path) -> str:
     Many CDNs (e.g. substackcdn) serve images as webp. xelatex does not support
     webp natively, so webp images are converted to PNG via ImageMagick (convert).
 
-    Uses a proxy-free opener so that OneCLI's HTTP_PROXY (injected for Anthropic
-    API credential injection) does not intercept CDN image requests, which need
-    no credential injection and may be blocked by the proxy.
+    Tries the default opener first, which honours the container's HTTPS_PROXY
+    (the OneCLI gateway — the only way out when v2 egress lockdown is on), then
+    falls back to a direct connection, which is what v1 always did.
 
     If a download or conversion fails the image reference is left unchanged
     (graceful degradation — pandoc will silently skip images it can't read).
@@ -170,15 +193,21 @@ def download_web_images(text: str, tmp_dir: Path) -> str:
                 'Accept-Language': 'en-GB,en;q=0.9',
                 'Referer': 'https://substack.com/',
             })
-            # Bypass HTTP_PROXY — OneCLI sets it for Anthropic API credential
-            # injection, but CDN image requests need no credentials and the
-            # proxy may block or reject external traffic.
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            with opener.open(req, timeout=15) as resp:
-                ct = resp.headers.get('Content-Type', '')
-                ext = _ext_from_content_type(ct) or _ext_from_url(url) or '.bin'
-                local_path = tmp_dir / f'web-image-{n}{ext}'
-                local_path.write_bytes(resp.read())
+            local_path = None
+            last_exc: Exception | None = None
+            for handlers in ((), (urllib.request.ProxyHandler({}),)):
+                try:
+                    opener = urllib.request.build_opener(*handlers)
+                    with opener.open(req, timeout=15) as resp:
+                        ct = resp.headers.get('Content-Type', '')
+                        ext = _ext_from_content_type(ct) or _ext_from_url(url) or '.bin'
+                        local_path = tmp_dir / f'web-image-{n}{ext}'
+                        local_path.write_bytes(resp.read())
+                    break
+                except Exception as exc:  # noqa: BLE001 — try the next route
+                    last_exc = exc
+            if local_path is None:
+                raise last_exc or RuntimeError('download failed')
         except Exception as exc:
             print(f"Warning: failed to download image {n} ({url}): {exc}", file=sys.stderr)
             return match.group(0)  # leave unchanged
@@ -259,28 +288,28 @@ def preprocess_obsidian(text: str, note_path: Path, tmp_dir: Path) -> str:
 def find_note(query: str) -> Path:
     """Resolve query to a single .md file. Exits with message if not found/ambiguous."""
 
-    candidate = VAULT_MOUNT / query
+    candidate = vault_mount() / query
     if candidate.exists() and candidate.is_file():
         return candidate
 
     if not query.endswith('.md'):
-        candidate = VAULT_MOUNT / (query + '.md')
+        candidate = vault_mount() / (query + '.md')
         if candidate.exists():
             return candidate
 
     stem = Path(query).stem
-    matches = [p for p in VAULT_MOUNT.rglob('*.md') if stem.lower() in p.stem.lower()]
+    matches = [p for p in vault_mount().rglob('*.md') if stem.lower() in p.stem.lower()]
 
     if len(matches) == 1:
         return matches[0]
 
     if len(matches) > 1:
-        listing = '\n'.join(f'  {m.relative_to(VAULT_MOUNT)}' for m in matches[:15])
+        listing = '\n'.join(f'  {m.relative_to(vault_mount())}' for m in matches[:15])
         print(f"Ambiguous — {len(matches)} matches for '{query}':\n{listing}\n"
               "Re-run with an exact vault-relative path.", file=sys.stderr)
         sys.exit(2)
 
-    print(f"Note not found: '{query}'\nVault root: {VAULT_MOUNT}", file=sys.stderr)
+    print(f"Note not found: '{query}'\nVault root: {vault_mount()}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -371,8 +400,8 @@ def main() -> None:
     note_path = find_note(args.path)
     pdf_path = note_path.with_suffix('.pdf')
 
-    print(f"Note:   {note_path.relative_to(VAULT_MOUNT)}")
-    print(f"Output: {pdf_path.relative_to(VAULT_MOUNT)}")
+    print(f"Note:   {note_path.relative_to(vault_mount())}")
+    print(f"Output: {pdf_path.relative_to(vault_mount())}")
 
     if args.dry_run:
         print("Dry run — nothing written.")
