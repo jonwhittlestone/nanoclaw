@@ -1,0 +1,13 @@
+{
+  "groups": {
+    "whatsapp_main": {
+      "mcpServers": {
+        "google-calendar": {
+          "type": "http",
+          "url": "http://host.docker.internal:3020/mcp",
+          "instructions": "Read-only Google Calendar for Jon (list_calendars, list_events, get_event). Use it for any schedule or time question; calendar IDs are in your memory."
+        }
+      }
+    }
+  }
+}

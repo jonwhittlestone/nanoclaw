@@ -79,13 +79,17 @@ describe('applyForkConfig', () => {
 
   it('rejects an invalid MCP server through the same validator ncl uses', async () => {
     await group('ag-1', 'whatsapp_main');
-    const spec = { groups: { whatsapp_main: { mcpServers: { bad: { type: 'http', url: 'http://evil.example/mcp' } } } } };
+    const spec = {
+      groups: { whatsapp_main: { mcpServers: { bad: { type: 'http', url: 'http://evil.example/mcp' } } } },
+    };
 
     await expect(applyForkConfig(spec as ForkConfig)).rejects.toThrow(/HTTPS/);
   });
 
   it('ships a fork/config.json that declares google-calendar for the self-chat group', () => {
-    const spec = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fork', 'config.json'), 'utf8')) as ForkConfig;
+    const spec = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, '..', 'fork', 'config.json'), 'utf8'),
+    ) as ForkConfig;
     expect(spec.groups.whatsapp_main.mcpServers?.['google-calendar']).toMatchObject(GCAL);
   });
 });

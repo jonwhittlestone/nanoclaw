@@ -13,7 +13,7 @@ IMAGE := $(shell pnpm exec tsx -e "$(call SLUG_JS,getDefaultContainerImage)" 2>/
 ONECLI_URL := $(shell grep -E '^ONECLI_URL=' .env 2>/dev/null | cut -d= -f2- || echo http://127.0.0.1:10254)
 DB ?= data/v2.db
 
-.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring
+.PHONY: help setup doctor build image test test-host test-container check run chat deploy logs status inspect-groups inspect-tasks inspect-wiring fork-apply
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -65,6 +65,9 @@ deploy: build ## Rebuild and restart the v2 service
 
 logs: ## Tail the host log
 	tail -F logs/nanoclaw.log
+
+fork-apply: ## Re-apply fork/config.json (MCP servers, packages) to the central DB
+	pnpm exec tsx scripts/fork-apply.ts fork/config.json
 
 status: ## ncl status
 	pnpm run ncl status
