@@ -56,3 +56,8 @@ docs/maintainer-guide.md
 docs/drafts/
 forks.md
 .worktrees/
+
+# fork python tests
+.venv/
+__pycache__/
+.pytest_cache/
