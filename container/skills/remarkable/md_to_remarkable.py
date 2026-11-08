@@ -89,7 +89,7 @@ def render_mermaid_blocks(text: str, tmp_dir: Path) -> str:
             '--input', str(mmd_file),
             '--output', str(png_file),
             '--backgroundColor', 'white',
-            '--width', '1200',      # ~A5 at 226 DPI — good RM2 resolution
+            '--size', '1200',       # mmdc 12 (was --width); ~A5 at 226 DPI for the RM2
         ]
         cfg = puppeteer_config(tmp_dir)
         if cfg:

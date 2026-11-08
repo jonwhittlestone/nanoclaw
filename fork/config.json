@@ -25,7 +25,7 @@
           "imagemagick"
         ],
         "npm": [
-          "@mermaid-js/mermaid-cli"
+          "@mermaid-js/mermaid-cli@12.2.0"
         ]
       }
     }
