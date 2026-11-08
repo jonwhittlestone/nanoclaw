@@ -39,7 +39,6 @@ import {
 import type { GroupMetadata, WAMessageKey, WAMessage, WASocket } from '@whiskeysockets/baileys';
 
 import { isSafeAttachmentName } from '../attachment-safety.js';
-import { DATA_DIR } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { registerChannelAdapter } from './channel-registry.js';
@@ -342,6 +341,29 @@ export function appendMediaFailureNote(content: string, failures: string[]): str
 
 /** Map file extension to Baileys media message type. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/**
+ * Fork (jonwhittlestone/nanoclaw): shape one downloaded media item as an
+ * inbound attachment carrying its bytes inline. The host's session-manager
+ * stages `data` into the session inbox (inbox/<message id>/<name>) and sets
+ * `localPath` itself, which is the path the container can actually read.
+ */
+export function toInboundAttachment(
+  type: string,
+  rawName: string | undefined,
+  mimeType: string | undefined,
+  buffer: Buffer,
+  fallbackName = `${type}-${Date.now()}`,
+): { type: string; name: string; mimeType?: string; size: number; data: string } {
+  const name = rawName !== undefined && isSafeAttachmentName(rawName) ? rawName : fallbackName;
+  return {
+    type,
+    name,
+    ...(mimeType ? { mimeType } : {}),
+    size: buffer.length,
+    data: buffer.toString('base64'),
+  };
+}
+
 function buildMediaMessage(data: Buffer, filename: string, ext: string, caption?: string): any {
   const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
   const videoExts = ['.mp4', '.mov', '.avi', '.mkv'];
@@ -573,7 +595,7 @@ registerChannelAdapter('whatsapp', {
       msg: WAMessage,
       normalized: any,
     ): Promise<{
-      attachments: Array<{ type: string; name: string; localPath: string }>;
+      attachments: Array<ReturnType<typeof toInboundAttachment>>;
       failures: string[];
     }> {
       const mediaTypes: Array<{ key: string; type: string; ext: string }> = [
@@ -582,7 +604,7 @@ registerChannelAdapter('whatsapp', {
         { key: 'audioMessage', type: 'audio', ext: '.ogg' },
         { key: 'documentMessage', type: 'document', ext: '' },
       ];
-      const results: Array<{ type: string; name: string; localPath: string }> = [];
+      const results: Array<ReturnType<typeof toInboundAttachment>> = [];
       const failures: string[] = [];
       for (const { key, type, ext } of mediaTypes) {
         if (!normalized[key]) continue;
@@ -609,11 +631,10 @@ registerChannelAdapter('whatsapp', {
               replacement: filename,
             });
           }
-          const attachDir = path.join(DATA_DIR, 'attachments');
-          fs.mkdirSync(attachDir, { recursive: true });
-          const filePath = path.join(attachDir, filename);
-          fs.writeFileSync(filePath, buffer);
-          results.push({ type, name: filename, localPath: `attachments/${filename}` });
+          // Fork: pass the bytes inline; session-manager stages them into the
+          // session inbox (upstream wrote to DATA_DIR/attachments, which the
+          // container can't see).
+          results.push(toInboundAttachment(type, filename, normalized[key].mimetype ?? undefined, buffer));
           log.info('Media downloaded', { type, filename });
         } catch (err) {
           log.warn('Failed to download media', { type, err });
