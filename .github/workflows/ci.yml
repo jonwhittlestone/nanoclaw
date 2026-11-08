@@ -2,11 +2,12 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # Fork: v2/** carries the v2 port until cut-over swaps it onto main.
+    branches: [main, 'v2/**']
   # A post-merge run on main, so main itself carries a verdict and not only the
   # pull requests that fed it. Nothing below reads the pull_request payload.
   push:
-    branches: [main]
+    branches: [main, 'v2/main']
 
 jobs:
   test:
