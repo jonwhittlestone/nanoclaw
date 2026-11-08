@@ -323,3 +323,24 @@ class TestV2Layout:
         cfg = Path(seen["cmd"][seen["cmd"].index("--puppeteerConfigFile") + 1])
         import json
         assert json.loads(cfg.read_text())["executablePath"] == "/usr/bin/chromium"
+
+    def test_mermaid_uses_mmdc_12_size_flag(self, tmp_path):
+        # mermaid-cli 12 (pinned in fork/config.json) replaced --width with --size
+        text = "```mermaid\ngraph TD; A-->B\n```"
+        seen = {}
+
+        def fake_mmdc(cmd, **kwargs):
+            seen["cmd"] = cmd
+            Path(cmd[cmd.index("--output") + 1]).write_bytes(b"\x89PNG")
+            return MagicMock(returncode=0)
+
+        with patch("shutil.which", return_value="/usr/bin/mmdc"), patch("subprocess.run", side_effect=fake_mmdc):
+            render_mermaid_blocks(text, tmp_path)
+
+        assert "--width" not in seen["cmd"]
+        assert seen["cmd"][seen["cmd"].index("--size") + 1] == "1200"
+
+    def test_fork_config_pins_mermaid_cli_12(self):
+        import json
+        cfg = json.loads((Path(__file__).resolve().parents[2] / "config.json").read_text())
+        assert "@mermaid-js/mermaid-cli@12.2.0" in cfg["groups"]["whatsapp_main"]["packages"]["npm"]
