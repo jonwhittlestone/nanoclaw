@@ -20,6 +20,7 @@ function deps(over: Partial<WarmDeps> = {}): WarmDeps {
     stats: vi.fn(async () => ({ drafts: 2, busy: false })),
     isRunning: vi.fn(() => false),
     wake: vi.fn(async () => true),
+    prime: vi.fn(async () => {}),
     ...over,
   } as WarmDeps;
 }
@@ -83,5 +84,34 @@ describe('warmTick', () => {
     const d = deps({ stats: vi.fn(async () => ({ drafts: 40, busy: true })), isRunning: vi.fn(() => true) });
     expect(await warmTick(d, DAY)).toBe('warm');
     expect(d.closeSession).not.toHaveBeenCalled();
+  });
+
+  it('primes a session before waking it, so the first real draft skips first-turn setup', async () => {
+    const order: string[] = [];
+    const d = deps({
+      prime: vi.fn(async () => void order.push('prime')),
+      wake: vi.fn(async () => (order.push('wake'), true)),
+    });
+    expect(await warmTick(d, DAY)).toBe('woke');
+    expect(d.prime).toHaveBeenCalledWith(session);
+    expect(order).toEqual(['prime', 'wake']);
+  });
+
+  it('does not prime a container that is already warm', async () => {
+    const d = deps({ isRunning: vi.fn(() => true) });
+    await warmTick(d, DAY);
+    expect(d.prime).not.toHaveBeenCalled();
+  });
+
+  it('does not prime outside warm hours', async () => {
+    const d = deps();
+    await warmTick(d, NIGHT);
+    expect(d.prime).not.toHaveBeenCalled();
+  });
+
+  it('never primes a session with a draft in progress', async () => {
+    const d = deps({ stats: vi.fn(async () => ({ drafts: 3, busy: true })) });
+    expect(await warmTick(d, DAY)).toBe('woke');
+    expect(d.prime).not.toHaveBeenCalled();
   });
 });
