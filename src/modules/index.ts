@@ -27,4 +27,5 @@ import './self-mod/index.js';
 // Fork: before community-portal, whose registration test expects the portal's
 // host hooks to be the last ones registered.
 import './inbox-prune/index.js';
+import './journal-warm/index.js';
 import './community-portal/index.js';
