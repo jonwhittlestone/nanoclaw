@@ -16,10 +16,16 @@ import { findSessionForAgent, getSession, updateSession } from '../../db/session
 import { onHostShutdown, onHostStart } from '../../host-lifecycle.js';
 import { log } from '../../log.js';
 import { inboundDbPath } from '../../mailbox/sqlite/paths.js';
-import { resolveSession } from '../../session-manager.js';
+import { resolveSession, writeSessionMessage } from '../../session-manager.js';
 import { warmTick, type WarmDeps, type WarmOutcome } from './warm.js';
 
 const TICK_MS = 60_000;
+
+// The reply is a <message to="randoread"> with no thread, which the
+// journal-draft adapter ignores (it only answers threads it is waiting on).
+const PRIME_TEXT =
+  'Warm-up turn from the host, not a journal request: do not file anything. ' +
+  'Reply with exactly: <message to="randoread">{}</message>';
 let timer: NodeJS.Timeout | undefined;
 let last: WarmOutcome | undefined;
 
@@ -56,6 +62,19 @@ const deps: WarmDeps = {
     }
   },
   isRunning: isContainerRunning,
+  async prime(session) {
+    const s = await getSession(session.id);
+    if (!s) return;
+    await writeSessionMessage(s.agent_group_id, s.id, {
+      id: `journal-warmup-${Date.now()}`,
+      kind: 'chat',
+      timestamp: new Date().toISOString(),
+      platformId: 'randoread',
+      channelType: 'journal-draft',
+      threadId: null,
+      content: JSON.stringify({ text: PRIME_TEXT, sender: 'journal-warm', senderId: 'journal-draft:warmup' }),
+    });
+  },
   async wake(session) {
     const s = await getSession(session.id);
     return s ? wakeContainer(s) : false;

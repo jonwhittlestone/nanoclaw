@@ -25,6 +25,8 @@ export interface WarmDeps {
   stats(session: WarmSession): Promise<{ drafts: number; busy: boolean }>;
   isRunning(sessionId: string): boolean;
   wake(session: WarmSession): Promise<boolean>;
+  /** Queue a tiny warm-up turn so Claude Code setup happens before a real draft. */
+  prime(session: WarmSession): Promise<void>;
 }
 
 export type WarmOutcome = 'no-targets' | 'cold-hours' | 'warm' | 'woke' | 'rotated' | 'rotated+woke' | 'wake-failed';
@@ -36,12 +38,16 @@ export async function warmTick(deps: WarmDeps, now = new Date()): Promise<WarmOu
 
   let session = await deps.findSession(agentGroupId, messagingGroupId);
   let rotated = false;
+  let busy = false;
   if (session) {
-    const { drafts, busy } = await deps.stats(session);
+    const stats = await deps.stats(session);
+    busy = stats.busy;
+    const { drafts } = stats;
     if (shouldRotate({ createdAt: session.created_at, drafts, busy }, now, deps.timeZone)) {
       await deps.closeSession(session.id);
       session = undefined;
       rotated = true;
+      busy = false;
     }
   }
 
@@ -49,6 +55,8 @@ export async function warmTick(deps: WarmDeps, now = new Date()): Promise<WarmOu
 
   session ??= await deps.resolveSession(agentGroupId, messagingGroupId);
   if (deps.isRunning(session.id)) return rotated ? 'rotated' : 'warm';
+  // A queued draft already does the warming; never add a turn in front of it.
+  if (!busy) await deps.prime(session);
   const ok = await deps.wake(session);
   if (!ok) return 'wake-failed';
   return rotated ? 'rotated+woke' : 'woke';
