@@ -51,21 +51,22 @@ describe('journal-draft channel', () => {
     await expect(pending).resolves.toBe('{"a":1}');
   });
 
-  it('keeps concurrent requests apart by thread', async () => {
+  it('gives every request its own thread', async () => {
     const { adapter, ask } = channel();
     const { onInbound, setup } = fakeSetup();
     await adapter.setup(setup);
 
     const a = ask('A');
+    await vi.waitFor(() => expect(onInbound).toHaveBeenCalledTimes(1));
+    await adapter.deliver(JOURNAL_PLATFORM_ID, onInbound.mock.calls[0][1], { kind: 'chat', content: 'for A' });
+    await a;
     const b = ask('B');
     await vi.waitFor(() => expect(onInbound).toHaveBeenCalledTimes(2));
-    const threadA = onInbound.mock.calls[0][1];
-    const threadB = onInbound.mock.calls[1][1];
-    expect(threadA).not.toBe(threadB);
-
-    await adapter.deliver(JOURNAL_PLATFORM_ID, threadB, { kind: 'chat', content: { text: 'for B' } });
-    await adapter.deliver(JOURNAL_PLATFORM_ID, threadA, { kind: 'chat', content: 'for A' });
-    await expect(a).resolves.toBe('for A');
+    expect(onInbound.mock.calls[1][1]).not.toBe(onInbound.mock.calls[0][1]);
+    await adapter.deliver(JOURNAL_PLATFORM_ID, onInbound.mock.calls[1][1], {
+      kind: 'chat',
+      content: { text: 'for B' },
+    });
     await expect(b).resolves.toBe('for B');
   });
 
@@ -107,5 +108,43 @@ describe('readJournalDraftEnv', () => {
       JOURNAL_DRAFT_MAX_CONCURRENT: '1',
     });
     expect(cfg).toMatchObject({ host: '100.111.143.116', port: 3022, maxConcurrent: 1 });
+  });
+});
+
+describe('journal-draft channel: one draft in flight (shared warm session)', () => {
+  it('holds a second request until the first has been answered', async () => {
+    const { adapter, ask } = channel();
+    const { onInbound, setup } = fakeSetup();
+    await adapter.setup(setup);
+
+    const a = ask('A');
+    const b = ask('B');
+    await vi.waitFor(() => expect(onInbound).toHaveBeenCalledTimes(1));
+    // B must not be routed while A is outstanding: in a shared session two
+    // messages arriving together are batched into one turn whose replies all
+    // go to the first thread (design doc 06.12.07).
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onInbound).toHaveBeenCalledTimes(1);
+
+    const threadA = onInbound.mock.calls[0][1];
+    await adapter.deliver(JOURNAL_PLATFORM_ID, threadA, { kind: 'chat', content: 'for A' });
+    await expect(a).resolves.toBe('for A');
+
+    await vi.waitFor(() => expect(onInbound).toHaveBeenCalledTimes(2));
+    const threadB = onInbound.mock.calls[1][1];
+    await adapter.deliver(JOURNAL_PLATFORM_ID, threadB, { kind: 'chat', content: 'for B' });
+    await expect(b).resolves.toBe('for B');
+  });
+
+  it('releases the slot when a request times out, so the next one runs', async () => {
+    const { adapter, ask } = channel(40);
+    const { onInbound, setup } = fakeSetup();
+    await adapter.setup(setup);
+
+    const a = ask('A');
+    const b = ask('B');
+    await expect(a).rejects.toThrow(/timed out/);
+    await vi.waitFor(() => expect(onInbound).toHaveBeenCalledTimes(2));
+    await expect(b).rejects.toThrow(/timed out/);
   });
 });
