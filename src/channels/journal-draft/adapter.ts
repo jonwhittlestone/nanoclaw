@@ -1,6 +1,10 @@
 /**
  * Fork (jonwhittlestone/nanoclaw): journal-draft as a v2 channel adapter.
  *
+ * 06.12 update: the wiring is now session_mode "shared" (one warm session kept
+ * started by src/modules/journal-warm); each request still gets its own
+ * thread, and drafts are sent one at a time.
+ *
  * v1 called runContainerAgent() directly. In v2 the supported way to reach
  * an agent is a channel: each HTTP request becomes one inbound message on
  * its own thread. With the wiring's session_mode "per-thread", every request
@@ -70,7 +74,20 @@ export function createJournalDraftChannel(cfg: JournalDraftConfig): {
   let supervisor: Supervisor | null = null;
   const pending = new Map<string, Pending>();
 
+  // One draft in flight at a time. The wiring is a shared warm session, and
+  // two messages that arrive together get batched into one turn whose replies
+  // all go to the first message's thread (design doc 06.12.07), so a second
+  // draft waits until the first is answered or times out.
+  let inFlight: Promise<unknown> = Promise.resolve();
+
   function ask(prompt: string): Promise<string> {
+    const run = () => askNow(prompt);
+    const result = inFlight.then(run, run);
+    inFlight = result.catch(() => undefined);
+    return result;
+  }
+
+  function askNow(prompt: string): Promise<string> {
     if (!setupConfig) return Promise.reject(new Error('journal-draft channel not set up'));
     const threadId = randomUUID();
     const config = setupConfig;
