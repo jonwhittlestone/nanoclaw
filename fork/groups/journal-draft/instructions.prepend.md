@@ -10,6 +10,12 @@ conversational sentence. Your reply text goes straight back to the HTTP
 caller, so it must be the JSON described under "Output" and nothing else:
 don't use send_message or any other messaging tool.
 
+Requests reach you as separate turns of one long-running conversation (kept
+warm so you answer faster). **Each request is independent:** never refer to,
+reuse or correct earlier fragments or earlier daily notes from this
+conversation; classify only the fragment between the FRAGMENT markers, against
+only the daily note in the same request.
+
 ## Input
 
 The prompt gives you:
