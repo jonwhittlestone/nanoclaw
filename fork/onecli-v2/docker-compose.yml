@@ -38,6 +38,9 @@ services:
         condition: service_healthy
     ports:
       - "172.17.0.1:10264:10254"
+      # Loopback too: Google OAuth "Desktop" clients only redirect to localhost,
+      # so connections (e.g. google-sheets) are authorised via http://localhost:10264.
+      - "127.0.0.1:10264:10254"
       - "172.17.0.1:10265:10265"
     environment:
       DATABASE_URL: postgresql://onecli:onecli@postgres:5432/onecli
@@ -47,8 +50,8 @@ services:
       GATEWAY_PORT: "10265"
       GATEWAY_API_URL: http://localhost:10265
       GATEWAY_BASE_URL: host.docker.internal:10265
-      NEXT_PUBLIC_APP_URL: http://172.17.0.1:10264
-      APP_URL: http://172.17.0.1:10264
+      NEXT_PUBLIC_APP_URL: http://localhost:10264
+      APP_URL: http://localhost:10264
     volumes:
       - app-data:/app/data
     networks:
