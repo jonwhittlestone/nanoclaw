@@ -7,7 +7,7 @@ gets its own gateway, deployed from this compose file to `~/.onecli-v2`:
 | | v1 (`~/.onecli`) | v2 (`~/.onecli-v2`) |
 |---|---|---|
 | Version | 1.15.1 (`latest` as of 2026-04) | 1.42.0 (pinned via `.env` `ONECLI_VERSION`) |
-| API | `172.17.0.1:10254` | `172.17.0.1:10264` |
+| API | `172.17.0.1:10254` | `172.17.0.1:10264` (NanoClaw) and `127.0.0.1:10264` (browser, OAuth) |
 | Proxy | `:10255` | `:10265` (also inside the container — see below) |
 | Postgres | `127.0.0.1:5432` | `127.0.0.1:5433` |
 
@@ -16,6 +16,10 @@ Non-obvious settings, each found while smoke-testing:
 - `GATEWAY_PORT` / `GATEWAY_API_URL` / `GATEWAY_BASE_URL`: the gateway advertises its proxy
   to agent containers as `host.docker.internal:<port>`, so the port must differ from v1's
   *inside* the container too, or agents tunnel into v1's gateway (`ERR_PROXY_TUNNEL`).
+- `127.0.0.1:10264` + `APP_URL=http://localhost:10264`: OneCLI builds OAuth redirect URIs from
+  its own URL, and the Google OAuth client (`nanoclaw-gcal`, a Desktop client) only accepts
+  loopback redirects. Connect services such as Google Sheets from a browser on doylestone02 at
+  `http://localhost:10264/connections`. NanoClaw keeps using `ONECLI_URL=http://172.17.0.1:10264`.
 - `extra_hosts: host.docker.internal:host-gateway`: MCP calls to host services (gcal-mcp on
   `:3020`) go through the proxy, so the gateway itself must resolve the host.
 
